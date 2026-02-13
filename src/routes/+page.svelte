@@ -9,8 +9,10 @@
 
     // Cart State
     let cart = $state < { product: Product; qty: number }[] > ([]);
+    let customerName = $state("");
     let showReceipt = $state(false);
     let lastOrderId = $state < number | null > (null);
+    let lastCustomerName = $state("");
 
     // --- COMPUTED (Derived) ---
     let filteredProducts = $derived(
@@ -61,10 +63,17 @@
 
     async function checkout() {
         if (cart.length === 0) return;
+        
+        // Validate customer name
+        if (!customerName.trim()) {
+            alert('Please enter customer name before checkout!');
+            return;
+        }
 
         const orderId = await db.orders.add({
             date: new Date(),
             total: total,
+            customerName: customerName.trim(),
             items: cart.map(i => ({
                 name: i.product.name,
                 price: i.product.price,
@@ -85,12 +94,14 @@
         }
 
         lastOrderId = orderId as number;
+        lastCustomerName = customerName.trim();
         showReceipt = true;
     }
 
     function printReceipt() {
         window.print();
         cart = [];
+        customerName = "";
         showReceipt = false;
     }
 </script>
@@ -112,7 +123,7 @@
                 disabled={p.stock <= 0} class:out-of-stock={p.stock <=0}>
                     <div class="p-info">
                         <h3>{p.name}</h3>
-                        <span class="price">${p.price.toFixed(2)}</span>
+                        <span class="price">Rp {p.price.toFixed(2)}</span>
                     </div>
                     <small class:warning={p.stock < 5} class="stock-tag">
                         {p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'}
@@ -123,6 +134,7 @@
         </div>
 
         <div class="footer-links">
+            <a href="/orders" class="secondary-btn">📋 Order History</a>
             <a href="/inventory" class="secondary-btn">⚙️ Manage Inventory</a>
         </div>
     </div>
@@ -146,13 +158,13 @@
                 <div class="row-info">
                     <strong>{item.product.name}</strong>
                     <div class="qty-control">
-                        <span>${item.product.price.toFixed(2)} ×</span>
+                        <span>Rp {item.product.price.toFixed(2)} ×</span>
                         <input type="number" value={item.qty} min="0" max={item.product.stock} oninput={(e)=>
                         updateCartQty(i, parseInt(e.currentTarget.value) || 0)} />
                     </div>
                 </div>
                 <div class="row-total">
-                    <span class="subtotal">${(item.product.price * item.qty).toFixed(2)}</span>
+                    <span class="subtotal">Rp {(item.product.price * item.qty).toFixed(2)}</span>
                     <button class="del-btn" onclick={()=> removeFromCart(i)} title="Remove">✕</button>
                 </div>
             </div>
@@ -160,9 +172,19 @@
         </div>
 
         <div class="cart-footer">
+            <div class="customer-input">
+                <label for="customerName">Customer Name</label>
+                <input 
+                    id="customerName"
+                    type="text" 
+                    placeholder="Enter customer name..." 
+                    bind:value={customerName}
+                    class="customer-name-input"
+                />
+            </div>
             <div class="summary-line">
                 <span>Total Amount:</span>
-                <span class="grand-total">${total.toFixed(2)}</span>
+                <span class="grand-total">Rp {total.toFixed(2)}</span>
             </div>
             <button class="checkout-btn primary-btn" onclick={checkout} disabled={cart.length===0}>
                 Place Order & Print Receipt
@@ -178,20 +200,21 @@
         <div class="receipt-header">
             <h2>You&Gee POS</h2>
             <p class="order-id">Order ID: #{lastOrderId}</p>
+            <p class="customer-name">Customer: {lastCustomerName}</p>
             <p class="date">{new Date().toLocaleString()}</p>
         </div>
         <div class="receipt-content">
             {#each cart as item}
             <div class="receipt-row">
                 <span>{item.product.name} (x{item.qty})</span>
-                <span>${(item.product.price * item.qty).toFixed(2)}</span>
+                <span>Rp {(item.product.price * item.qty).toFixed(2)}</span>
             </div>
             {/each}
         </div>
         <div class="receipt-footer">
             <div class="final-total">
                 <span>TOTAL PAID</span>
-                <span>${total.toFixed(2)}</span>
+                <span>Rp {total.toFixed(2)}</span>
             </div>
             <p class="thanks">Thank you for your business!</p>
         </div>
@@ -428,6 +451,35 @@
         background: #fcfcfd;
     }
 
+    .customer-input {
+        margin-bottom: 20px;
+    }
+
+    .customer-input label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #4a5568;
+        margin-bottom: 8px;
+    }
+
+    .customer-name-input {
+        width: 100%;
+        padding: 12px 16px;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 15px;
+        transition: all 0.2s;
+        box-sizing: border-box;
+    }
+
+    .customer-name-input:focus {
+        outline: none;
+        border-color: #3182ce;
+        box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+    }
+
+
     .summary-line {
         display: flex;
         justify-content: space-between;
@@ -482,6 +534,8 @@
 
     .footer-links {
         padding: 10px 0;
+        display: flex;
+        gap: 12px;
     }
 
     .empty-state {
@@ -573,25 +627,30 @@
     }
 
     @media print {
-        body * {
-            visibility: hidden;
+        /* Hide everything on the page */
+        .pos-wrapper {
+            display: none !important;
         }
 
-        .modal-overlay,
-        .receipt-paper,
-        .receipt-paper * {
-            visibility: visible;
-        }
-
+        /* Show only the receipt */
         .modal-overlay {
-            position: absolute;
-            inset: 0;
-            background: white;
-            backdrop-filter: none;
+            position: static !important;
+            background: white !important;
+            backdrop-filter: none !important;
+            display: block !important;
         }
 
+        .receipt-paper {
+            width: 100% !important;
+            max-width: 80mm !important;
+            margin: 0 !important;
+            padding: 20px !important;
+            box-shadow: none !important;
+        }
+
+        /* Hide print/close buttons */
         .no-print {
-            display: none;
+            display: none !important;
         }
     }
 </style>
