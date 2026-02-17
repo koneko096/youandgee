@@ -13,6 +13,7 @@
     let showReceipt = $state(false);
     let lastOrderId = $state < number | null > (null);
     let lastCustomerName = $state("");
+    let isCartOpen = $state(false);
 
     // --- COMPUTED (Derived) ---
     let filteredProducts = $derived(
@@ -103,8 +104,11 @@
         cart = [];
         customerName = "";
         showReceipt = false;
+        isCartOpen = false;
     }
 </script>
+
+{@debug isCartOpen}
 
 <div class="pos-wrapper">
     <!-- LEFT: Catalog -->
@@ -139,11 +143,21 @@
         </div>
     </div>
 
+    <!-- Mobile Backdrop -->
+    {#if isCartOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="mobile-backdrop" onclick={() => isCartOpen = false}></div>
+    {/if}
+
     <!-- RIGHT: Cart -->
-    <div class="cart-section card">
+    <div class="cart-section card" class:open={isCartOpen}>
+        <button class="mobile-close-btn" onclick={() => isCartOpen = false} aria-label="Close Cart">✕</button>
         <div class="cart-header">
-            <h2>Current Order</h2>
-            <span class="item-count">{cart.length} items</span>
+            <div class="header-content">
+                <h2>Current Order</h2>
+                <span class="item-count">{cart.length} items</span>
+            </div>
         </div>
 
         <div class="cart-items">
@@ -193,12 +207,22 @@
     </div>
 </div>
 
+<!-- Mobile Cart Toggle -->
+<div class="mobile-cart-toggle">
+    <button class="primary-btn toggle-btn" onclick={() => isCartOpen = true}>
+        <div class="toggle-content">
+            <span>🛒 {cart.length} items</span>
+            <span class="toggle-total">Rp {total.toFixed(2)}</span>
+        </div>
+    </button>
+</div>
+
 <!-- RECEIPT MODAL -->
 {#if showReceipt}
 <div class="modal-overlay">
     <div class="receipt-paper">
         <div class="receipt-header">
-            <h2>You&Gee POS</h2>
+            <h2>Arafah POS</h2>
             <p class="order-id">Order ID: #{lastOrderId}</p>
             <p class="customer-name">Customer: {lastCustomerName}</p>
             <p class="date">{new Date().toLocaleString()}</p>
@@ -243,48 +267,169 @@
         box-sizing: border-box;
     }
 
-    /* Responsive adjustments for tablet and mobile */
-    @media (max-width: 1024px) {
-        .pos-wrapper {
-            flex-direction: column;
-            height: auto;
-            min-height: 100vh;
-        }
-
-        .catalog-section {
-            order: 2;
-        }
-
-        .cart-section {
-            order: 1;
-            width: 100%;
-            max-height: 400px;
-        }
-
-        .header-row {
-            flex-direction: column;
-            align-items: stretch !important;
-        }
-
-        .search-bar {
-            max-width: 100% !important;
-        }
-
-        .grid {
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        }
+    /* Right Section (Cart) */
+    .cart-section {
+        width: 400px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
     }
 
-    @media (max-width: 768px) {
+    .cart-header {
+        padding: 24px;
+        border-bottom: 1px solid #edf2f7;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .cart-header h2 {
+        margin: 0;
+        font-size: 1.25rem;
+    }
+
+    .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+    }
+
+    /* Base state: Hidden components */
+    .mobile-backdrop,
+    .mobile-cart-toggle,
+    .mobile-close-btn {
+        display: none;
+    }
+
+    @media (max-width: 1024px) {
         .pos-wrapper {
             padding: 10px;
             gap: 10px;
+            padding-bottom: 80px; 
+            /* On mobile, wrapper is just for catalog */
+            overflow-x: hidden;
         }
 
-        .header-card,
-        .cart-header,
-        .cart-items,
-        .cart-footer {
+        /* 1. Backdrop */
+        .mobile-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 9998;
+            backdrop-filter: blur(2px);
+        }
+        
+        /* 2. Cart Section (Modal) */
+        .cart-section {
+            display: none; /* Hidden by default */
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            height: auto;
+            //max-height: 85vh;
+            z-index: 9999; /* Topmost */
+            margin: 0;
+            border-radius: 12px;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            background: white;
+            order: unset; /* Remove order from tablet query inheritance */
+        }
+
+        /* SHOW CART WHEN OPEN */
+        .cart-section.open {
+            display: flex;
+        }
+
+        .cart-header {
+            padding: 15px;
+            background: #fff;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+        }
+
+        .header-content {
+            padding-right: 40px; 
+        }
+
+        /* 3. Close Button (Direct child of cart-section) */
+        .mobile-close-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f1f5f9;
+            border: 2px solid #fff;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: #4a5568;
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            z-index: 10000;
+            pointer-events: auto;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .mobile-close-btn:active {
+            background: #e2e8f0;
+            transform: scale(0.95);
+        }
+
+        /* 4. Toggle Button (Bottom) */
+        .mobile-cart-toggle {
+            display: block;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 400px;
+            z-index: 1000;
+        }
+
+        .grid {
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px;
+        }
+
+        .product-card {
+            padding: 12px;
+        }
+        
+        /* Fix overlapping content in catalog */
+        .catalog-section {
+            order: 1; /* Reset order to normal */
+        }
+
+        .toggle-btn {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle-content {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            align-items: center;
+        }
+
+        .toggle-total {
+            font-size: 1.1em;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .header-card {
             padding: 15px;
         }
 
@@ -295,10 +440,6 @@
 
         .product-card {
             padding: 15px;
-        }
-
-        .cart-section {
-            max-height: 350px;
         }
 
         .header-row h1 {
@@ -339,7 +480,7 @@
         border: 1px solid #edf2f7;
     }
 
-    /* Left Section */
+    /* Modal & Receipt */
     .catalog-section {
         flex: 1;
         display: flex;
@@ -444,27 +585,6 @@
         background: #f8fafc;
     }
 
-    /* Right Section (Cart) */
-    .cart-section {
-        width: 400px;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    .cart-header {
-        padding: 24px;
-        border-bottom: 1px solid #edf2f7;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .cart-header h2 {
-        margin: 0;
-        font-size: 1.25rem;
-    }
-
     .item-count {
         background: #edf2f7;
         padding: 4px 10px;
@@ -475,7 +595,6 @@
 
     .cart-items {
         flex: 1;
-        overflow-y: auto;
         padding: 10px 24px;
     }
 
@@ -733,6 +852,10 @@
 
         /* Hide everything on the page */
         .pos-wrapper {
+            display: none !important;
+        }
+        
+        .mobile-cart-toggle {
             display: none !important;
         }
 

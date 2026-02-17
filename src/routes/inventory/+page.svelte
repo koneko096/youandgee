@@ -49,7 +49,7 @@
             <h3>Add New Product</h3>
             <div class="input-group">
                 <input type="text" placeholder="Product Name" bind:value={name} />
-                <input type="number" placeholder="Price" bind:value={price} step="0.01" />
+                <input type="tel" placeholder="Price" bind:value={price} />
                 <input type="number" placeholder="Initial Stock" bind:value={stock} />
                 <button class="primary-btn" onclick={addProduct}>Add Item</button>
             </div>
@@ -67,7 +67,7 @@
             <thead>
                 <tr>
                     <th>Name</th>
-                    <th>Price ($)</th>
+                    <th>Price (Rp)</th>
                     <th>Current Stock</th>
                     <th>Actions</th>
                 </tr>
@@ -129,10 +129,19 @@
     }
 
     .tool-bar {
-        display: grid;
-        grid-template-columns: 2fr 1fr;
+        display: flex;
         gap: 20px;
         margin-bottom: 20px;
+    }
+
+    @media (max-width: 1024px) {
+        .tool-bar {
+            flex-direction: column;
+        }
+
+        .add-form {
+            overflow-x: auto;
+        }
     }
 
     .card {
