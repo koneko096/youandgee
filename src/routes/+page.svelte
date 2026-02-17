@@ -243,6 +243,95 @@
         box-sizing: border-box;
     }
 
+    /* Responsive adjustments for tablet and mobile */
+    @media (max-width: 1024px) {
+        .pos-wrapper {
+            flex-direction: column;
+            height: auto;
+            min-height: 100vh;
+        }
+
+        .catalog-section {
+            order: 2;
+        }
+
+        .cart-section {
+            order: 1;
+            width: 100%;
+            max-height: 400px;
+        }
+
+        .header-row {
+            flex-direction: column;
+            align-items: stretch !important;
+        }
+
+        .search-bar {
+            max-width: 100% !important;
+        }
+
+        .grid {
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        }
+    }
+
+    @media (max-width: 768px) {
+        .pos-wrapper {
+            padding: 10px;
+            gap: 10px;
+        }
+
+        .header-card,
+        .cart-header,
+        .cart-items,
+        .cart-footer {
+            padding: 15px;
+        }
+
+        .grid {
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+        }
+
+        .product-card {
+            padding: 15px;
+        }
+
+        .cart-section {
+            max-height: 350px;
+        }
+
+        .header-row h1 {
+            font-size: 1.25rem;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .cart-row {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .row-total {
+            width: 100%;
+            justify-content: space-between;
+        }
+
+        .footer-links {
+            flex-direction: column;
+        }
+
+        .secondary-btn {
+            width: 100%;
+            text-align: center;
+        }
+    }
+
     .card {
         background: white;
         border-radius: 12px;
@@ -627,6 +716,21 @@
     }
 
     @media print {
+        /* Reset all styling for print */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: auto;
+            margin: 0;
+            padding: 0;
+            overflow: visible;
+        }
+
         /* Hide everything on the page */
         .pos-wrapper {
             display: none !important;
@@ -638,19 +742,49 @@
             background: white !important;
             backdrop-filter: none !important;
             display: block !important;
+            width: 100% !important;
+            height: auto !important;
+            inset: auto !important;
         }
 
         .receipt-paper {
             width: 100% !important;
             max-width: 80mm !important;
-            margin: 0 !important;
+            margin: 0 auto !important;
             padding: 20px !important;
             box-shadow: none !important;
+            border-radius: 0 !important;
+            page-break-inside: avoid;
+        }
+
+        .receipt-header,
+        .receipt-content,
+        .receipt-footer {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+
+        .receipt-row {
+            display: flex !important;
+            visibility: visible !important;
         }
 
         /* Hide print/close buttons */
         .no-print {
             display: none !important;
+        }
+
+        /* Ensure text is visible */
+        .receipt-paper * {
+            color: #000 !important;
+            background: transparent !important;
+        }
+
+        /* Mobile print fixes */
+        @page {
+            margin: 0.5cm;
+            size: auto;
         }
     }
 </style>
