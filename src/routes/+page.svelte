@@ -106,14 +106,7 @@
         showReceipt = false;
         isCartOpen = false;
     }
-
-    // Restock helper (can be called from inventory page or elsewhere)
-    async function restockProduct(productId: number, quantity: number) {
-        await recordStockOperation(productId, quantity, 'restock');
-    }
 </script>
-
-{@debug isCartOpen}
 
 <div class="pos-wrapper">
     <!-- LEFT: Catalog -->
@@ -127,7 +120,7 @@
 
         <div class="grid">
             {#if $products}
-            {#each filteredProducts as p}
+            {#each filteredProducts as p (p.id)}
             <button class="product-card card" onclick={()=> addToCart(p)}
                 disabled={p.stock <= 0} class:out-of-stock={p.stock <=0}>
                     <div class="p-info">
@@ -143,9 +136,9 @@
         </div>
 
         <div class="footer-links">
-            <a href="/orders" class="secondary-btn">📋 Order History</a>
-            <a href="/inventory" class="secondary-btn">⚙️ Manage Inventory</a>
-            <a href="/reports" class="secondary-btn">📊 Reports</a>
+            <a href="/orders" class="secondary-btn" data-sveltekit-preload-data="hover">📋 Order History</a>
+            <a href="/inventory" class="secondary-btn" data-sveltekit-preload-data="hover">⚙️ Manage Inventory</a>
+            <a href="/reports" class="secondary-btn" data-sveltekit-preload-data="hover">📊 Reports</a>
         </div>
     </div>
 
@@ -173,7 +166,7 @@
                 <small>Select products from the catalog</small>
             </div>
             {/if}
-            {#each cart as item, i}
+            {#each cart as item, i (i)}
             <div class="cart-row">
                 <div class="row-info">
                     <strong>{item.product.name}</strong>
@@ -234,7 +227,7 @@
             <p class="date">{new Date().toLocaleString()}</p>
         </div>
         <div class="receipt-content">
-            {#each cart as item}
+            {#each cart as item, i (i)}
             <div class="receipt-row">
                 <span>{item.product.name} (x{item.qty})</span>
                 <span>Rp {(item.product.price * item.qty).toFixed(2)}</span>

@@ -8,10 +8,12 @@ declare global {
 		// interface PageState {}
 		interface Platform {
 			env: {
-				DB: any; // D1Database
+				DB: D1Database;
 			};
 		}
 	}
 }
 
 export {};
+
+/// <reference types="@cloudflare/workers-types" />

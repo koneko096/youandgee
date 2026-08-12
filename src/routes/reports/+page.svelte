@@ -1,7 +1,8 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
-    import type { StockOperation, Product } from "$lib/db";
+    import type { Product } from "$lib/db";
+    import { SvelteMap } from "svelte/reactivity";
 
     // --- STATE ---
     let reportDate = $state(new Date().toISOString().split('T')[0]);
@@ -13,18 +14,17 @@
     });
     let allProducts = $state(liveQuery(() => db.products.toArray()));
     let recentOps = $state(liveQuery(() => db.operations.orderBy('timestamp').reverse().limit(50).toArray()));
-    let productNames = $state(new Map<number, string>());
+    let productNames = new SvelteMap<number, string>();
     let isLoading = $state(false);
 
     // Build name lookup reactively
     $effect(() => {
         const products = $allProducts;
         if (products) {
-            const m = new Map<number, string>();
+            productNames.clear();
             for (const p of products) {
-                if (p.id != null) m.set(p.id, p.name);
+                if (p.id != null) productNames.set(p.id, p.name);
             }
-            productNames = m;
         }
     });
 
@@ -47,12 +47,12 @@
 
         let sales = 0;
         let restock = 0;
-        const productMap = new Map<number, { product: Product; sold: number; restocked: number }>();
+        const productMap: Record<number, { product: Product; sold: number; restocked: number }> = {};
 
         // Initialize product map
         for (const p of ($allProducts || [])) {
             if (p.id != null) {
-                productMap.set(p.id, { product: p, sold: 0, restocked: 0 });
+                productMap[p.id] = { product: p, sold: 0, restocked: 0 };
             }
         }
 
@@ -60,17 +60,17 @@
             if (op.quantityChange < 0) {
                 const qty = Math.abs(op.quantityChange);
                 sales += qty;
-                const entry = productMap.get(op.productId);
+                const entry = productMap[op.productId];
                 if (entry) entry.sold += qty;
             } else {
                 const qty = op.quantityChange;
                 restock += qty;
-                const entry = productMap.get(op.productId);
+                const entry = productMap[op.productId];
                 if (entry) entry.restocked += qty;
             }
         }
 
-        const byProduct = Array.from(productMap.values())
+        const byProduct = Object.values(productMap)
             .filter(p => p.sold > 0 || p.restocked > 0)
             .map(p => ({
                 product: p.product,
@@ -88,17 +88,13 @@
 
         isLoading = false;
     }
-
-    function formatCurrency(n: number) {
-        return `Rp ${n.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
 </script>
 
 <div class="reports-container">
     <div class="header-card card">
         <div class="header-row">
             <h1>📊 Stock Movement Reports</h1>
-            <a href="/" class="secondary-btn">← Back to POS</a>
+            <a href="/" class="secondary-btn" data-sveltekit-preload-data="hover">← Back to POS</a>
        </div>
    </div>
 

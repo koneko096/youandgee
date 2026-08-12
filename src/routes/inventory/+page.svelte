@@ -47,7 +47,7 @@
 
 <div class="inventory-container">
     <div class="header">
-        <a href="/" class="back-btn">← Back to POS</a>
+        <a href="/" class="back-btn" data-sveltekit-preload-data="hover">← Back to POS</a>
         <h1>Inventory Management</h1>
     </div>
 
