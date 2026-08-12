@@ -4,7 +4,16 @@ interface Product {
     id?: number; // Auto-incremented
     name: string;
     price: number;
-    stock: number;
+    stock: number; // Current stock (read-only from ledger summary)
+}
+
+interface StockOperation {
+    id?: string;              // Client-generated UUID
+    productId: number;        // Reference to product
+    quantityChange: number;   // e.g., +50 (restock), -2 (sale)
+    timestamp: string;        // ISO String
+    synced: number;           // 0 = false, 1 = true
+    reason?: 'sale' | 'restock' | 'adjustment' | 'return'; // Optional metadata
 }
 
 interface Order {
@@ -19,6 +28,7 @@ interface Order {
 class MyDatabase extends Dexie {
     products!: EntityTable<Product, 'id'>;
     orders!: EntityTable<Order, 'id'>;
+    operations!: EntityTable<StockOperation, 'id'>;
 
     constructor() {
         super('HomePOS');
@@ -26,6 +36,7 @@ class MyDatabase extends Dexie {
         // Version 1: Initial schema
         this.version(1).stores({
             products: '++id, name',
+            operations: '++id, productId, timestamp, synced',
             orders: '++id, date'
         });
 
@@ -42,9 +53,29 @@ class MyDatabase extends Dexie {
                 }
             }
         });
+
+        // Version 3: Event sourcing ledger - operations table with id as string (UUID)
+        this.version(3).stores({
+            products: '++id, name',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date'
+        }).upgrade(async (tx) => {
+            // Migration: Keep existing operations but change id to string for new ones
+            // Existing numeric IDs will be converted to strings
+            const ops = await tx.table('operations').toArray();
+            for (const op of ops) {
+                if (typeof op.id === 'number') {
+                    await tx.table('operations').delete(op.id);
+                    await tx.table('operations').add({
+                        ...op,
+                        id: op.id.toString()
+                    });
+                }
+            }
+        });
     }
 }
 
 const db = new MyDatabase();
 
-export { db, type Product, type Order };
+export { db, type Product, type Order, type StockOperation };

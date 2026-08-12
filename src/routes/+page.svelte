@@ -2,6 +2,7 @@
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
     import type { Product } from "$lib/db";
+    import { recordStockOperation } from "$lib/sync";
 
     // --- DATA ---
     let products = $state(liveQuery(() => db.products.toArray()));
@@ -64,11 +65,22 @@
 
     async function checkout() {
         if (cart.length === 0) return;
-        
+
         // Validate customer name
         if (!customerName.trim()) {
             alert('Please enter customer name before checkout!');
             return;
+        }
+
+        // Record each item as a stock operation (delta movement)
+        for (const item of cart) {
+            if (item.product.id) {
+                await recordStockOperation(
+                    item.product.id,
+                    -item.qty, // Negative for sale
+                    'sale'
+                );
+            }
         }
 
         const orderId = await db.orders.add({
@@ -82,18 +94,6 @@
             }))
         });
 
-        for (const item of cart) {
-            if (item.product.id) {
-                const current = await db.products.get(item.product.id);
-                if (current) {
-                    const newStock = current.stock - item.qty;
-                    await db.products.update(item.product.id, {
-                        stock: newStock >= 0 ? newStock : 0
-                    });
-                }
-            }
-        }
-
         lastOrderId = orderId as number;
         lastCustomerName = customerName.trim();
         showReceipt = true;
@@ -105,6 +105,11 @@
         customerName = "";
         showReceipt = false;
         isCartOpen = false;
+    }
+
+    // Restock helper (can be called from inventory page or elsewhere)
+    async function restockProduct(productId: number, quantity: number) {
+        await recordStockOperation(productId, quantity, 'restock');
     }
 </script>
 
@@ -140,6 +145,7 @@
         <div class="footer-links">
             <a href="/orders" class="secondary-btn">📋 Order History</a>
             <a href="/inventory" class="secondary-btn">⚙️ Manage Inventory</a>
+            <a href="/reports" class="secondary-btn">📊 Reports</a>
         </div>
     </div>
 
@@ -188,10 +194,10 @@
         <div class="cart-footer">
             <div class="customer-input">
                 <label for="customerName">Customer Name</label>
-                <input 
+                <input
                     id="customerName"
-                    type="text" 
-                    placeholder="Enter customer name..." 
+                    type="text"
+                    placeholder="Enter customer name..."
                     bind:value={customerName}
                     class="customer-name-input"
                 />
@@ -306,7 +312,7 @@
         .pos-wrapper {
             padding: 10px;
             gap: 10px;
-            padding-bottom: 80px; 
+            padding-bottom: 80px;
             /* On mobile, wrapper is just for catalog */
             overflow-x: hidden;
         }
@@ -320,7 +326,7 @@
             z-index: 9998;
             backdrop-filter: blur(2px);
         }
-        
+
         /* 2. Cart Section (Modal) */
         .cart-section {
             display: none; /* Hidden by default */
@@ -330,7 +336,7 @@
             transform: translate(-50%, -50%);
             width: 90%;
             height: auto;
-            //max-height: 85vh;
+            /* max-height: 85vh; */
             z-index: 9999; /* Topmost */
             margin: 0;
             border-radius: 12px;
@@ -356,7 +362,7 @@
         }
 
         .header-content {
-            padding-right: 40px; 
+            padding-right: 40px;
         }
 
         /* 3. Close Button (Direct child of cart-section) */
@@ -379,7 +385,7 @@
             pointer-events: auto;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        
+
         .mobile-close-btn:active {
             background: #e2e8f0;
             transform: scale(0.95);
@@ -405,7 +411,7 @@
         .product-card {
             padding: 12px;
         }
-        
+
         /* Fix overlapping content in catalog */
         .catalog-section {
             order: 1; /* Reset order to normal */
@@ -854,7 +860,7 @@
         .pos-wrapper {
             display: none !important;
         }
-        
+
         .mobile-cart-toggle {
             display: none !important;
         }
