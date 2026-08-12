@@ -8,8 +8,7 @@ on:
   workflow_dispatch:  # Manual trigger for production deploy
 
 env:
-  NODE_VERSION: "20"
-  PNPM_VERSION: "9"
+  NODE_VERSION: "22"
 
 jobs:
   build-and-test:
@@ -18,28 +17,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "pnpm"
+          cache: "npm"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Type check
-        run: pnpm run check
+        run: npm run check
 
       - name: Lint
-        run: pnpm run lint
+        run: npm run lint
 
       - name: Build
-        run: pnpm run build
+        run: npm run build
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
