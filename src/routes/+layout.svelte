@@ -5,14 +5,18 @@
 	let { children } = $props();
 
 	// 2. Use $state so the UI updates when the event fires
-	let deferredPrompt = $state < any > (null);
+	interface BeforeInstallPromptEvent extends Event {
+		prompt(): Promise<void>;
+		userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+	}
+	let deferredPrompt = $state<BeforeInstallPromptEvent | null>(null);
 
 	onMount(() => {
-		window.addEventListener('beforeinstallprompt', (e) => {
+		window.addEventListener('beforeinstallprompt', (e: Event) => {
 			// Prevent Chrome 67 and earlier from automatically showing the prompt
 			e.preventDefault();
 			// Stash the event so it can be triggered later
-			deferredPrompt = e;
+			deferredPrompt = e as BeforeInstallPromptEvent;
 		});
 	});
 

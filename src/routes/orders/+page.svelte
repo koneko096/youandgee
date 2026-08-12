@@ -1,7 +1,6 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
-    import type { Order } from "$lib/db";
 
     // --- DATA ---
     let orders = $state(liveQuery(() => db.orders.orderBy('date').reverse().toArray()));
@@ -18,13 +17,13 @@
     <div class="header-card card">
         <div class="header-row">
             <h1>Order History</h1>
-            <a href="/" class="secondary-btn">← Back to POS</a>
+            <a href="/" class="secondary-btn" data-sveltekit-preload-data="hover">← Back to POS</a>
         </div>
     </div>
 
     <div class="orders-container">
         {#if $orders && $orders.length > 0}
-            {#each $orders as order}
+            {#each $orders as order (order.id)}
             <div class="order-card card">
                 <button class="order-header" onclick={() => toggleOrder(order.id)}>
                     <div class="order-info">

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
+    import { recordStockOperation } from "$lib/sync";
 
     let name = $state("");
     let price = $state(0);
@@ -30,7 +31,13 @@
     }
 
     async function updateStock(id: number, newStock: number) {
-        await db.products.update(id, { stock: newStock });
+        const product = await db.products.get(id);
+        if (!product) return;
+
+        const diff = newStock - product.stock;
+        if (diff !== 0) {
+            await recordStockOperation(id, diff, diff > 0 ? 'restock' : 'adjustment');
+        }
     }
 
     async function updatePrice(id: number, newPrice: number) {
@@ -40,7 +47,7 @@
 
 <div class="inventory-container">
     <div class="header">
-        <a href="/" class="back-btn">← Back to POS</a>
+        <a href="/" class="back-btn" data-sveltekit-preload-data="hover">← Back to POS</a>
         <h1>Inventory Management</h1>
     </div>
 
