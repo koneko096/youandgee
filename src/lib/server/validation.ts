@@ -118,3 +118,88 @@ export function validateIncomingProduct(raw: unknown): ProductValidationResult {
         }
     };
 }
+
+const MAX_ORDER_ITEMS = 500;
+const MAX_CUSTOMER_NAME_LENGTH = 200;
+
+export interface IncomingOrderItem {
+    name: string;
+    price: number;
+    quantity: number;
+}
+
+export interface IncomingOrder {
+    uuid: string;
+    date: string;
+    customerName: string | undefined;
+    total: number;
+    items: IncomingOrderItem[];
+}
+
+export type OrderValidationResult =
+    | { ok: true; value: IncomingOrder }
+    | { ok: false; error: string };
+
+function validateIncomingOrderItem(raw: unknown): IncomingOrderItem | null {
+    if (typeof raw !== 'object' || raw === null) return null;
+    const item = raw as Record<string, unknown>;
+
+    if (typeof item.name !== 'string' || item.name.trim().length === 0 || item.name.length > MAX_NAME_LENGTH) return null;
+    if (typeof item.price !== 'number' || !Number.isInteger(item.price) || item.price < 0 || item.price > MAX_PRICE_MINOR_UNITS) return null;
+    if (typeof item.quantity !== 'number' || !Number.isInteger(item.quantity) || item.quantity <= 0) return null;
+
+    return { name: item.name, price: item.price, quantity: item.quantity };
+}
+
+export function validateIncomingOrder(raw: unknown): OrderValidationResult {
+    if (typeof raw !== 'object' || raw === null) {
+        return { ok: false, error: 'order must be an object' };
+    }
+
+    const o = raw as Record<string, unknown>;
+
+    if (typeof o.uuid !== 'string' || o.uuid.length === 0 || o.uuid.length > MAX_ID_LENGTH) {
+        return { ok: false, error: 'uuid must be a non-empty string' };
+    }
+
+    if (typeof o.date !== 'string' || o.date.length === 0 || Number.isNaN(Date.parse(o.date))) {
+        return { ok: false, error: 'date must be a parseable date string' };
+    }
+
+    if (o.customerName !== undefined && (typeof o.customerName !== 'string' || o.customerName.length > MAX_CUSTOMER_NAME_LENGTH)) {
+        return { ok: false, error: 'customerName must be a string' };
+    }
+
+    if (
+        typeof o.total !== 'number' ||
+        !Number.isInteger(o.total) ||
+        o.total < 0 ||
+        o.total > MAX_PRICE_MINOR_UNITS
+    ) {
+        return { ok: false, error: 'total must be a non-negative, bounded integer (minor units)' };
+    }
+
+    if (!Array.isArray(o.items) || o.items.length === 0 || o.items.length > MAX_ORDER_ITEMS) {
+        return { ok: false, error: `items must be a non-empty array of at most ${MAX_ORDER_ITEMS} entries` };
+    }
+
+    const items: IncomingOrderItem[] = [];
+    for (const raw of o.items) {
+        const item = validateIncomingOrderItem(raw);
+        if (!item) {
+            return { ok: false, error: 'every item needs a non-empty name, a non-negative integer price, and a positive integer quantity' };
+        }
+        items.push(item);
+    }
+
+    return {
+        ok: true,
+        value: {
+            uuid: o.uuid,
+            date: o.date,
+            customerName: o.customerName as string | undefined,
+            total: o.total,
+            items
+        }
+    };
+}

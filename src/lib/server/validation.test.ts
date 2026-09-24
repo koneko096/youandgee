@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateIncomingOperation, validateIncomingProduct } from './validation';
+import { validateIncomingOperation, validateIncomingOrder, validateIncomingProduct } from './validation';
 
 const VALID = {
     id: 'op-1',
@@ -94,5 +94,56 @@ describe('validateIncomingProduct', () => {
 
     it('rejects an unparseable updatedAt', () => {
         expect(validateIncomingProduct({ ...VALID_PRODUCT, updatedAt: 'not-a-date' }).ok).toBe(false);
+    });
+});
+
+const VALID_ORDER = {
+    uuid: 'order-uuid-1',
+    date: '2026-01-01T00:00:00.000Z',
+    customerName: 'Ada Lovelace',
+    total: 3000,
+    items: [{ name: 'Widget', price: 1000, quantity: 3 }]
+};
+
+describe('validateIncomingOrder', () => {
+    it('accepts a well-formed order', () => {
+        expect(validateIncomingOrder(VALID_ORDER)).toEqual({ ok: true, value: VALID_ORDER });
+    });
+
+    it('rejects a non-object payload', () => {
+        expect(validateIncomingOrder(null).ok).toBe(false);
+    });
+
+    it('rejects a missing or empty uuid', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, uuid: '' }).ok).toBe(false);
+    });
+
+    it('rejects an unparseable date', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, date: 'not-a-date' }).ok).toBe(false);
+    });
+
+    it('rejects a non-string customerName', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, customerName: 42 }).ok).toBe(false);
+    });
+
+    it('rejects a negative, non-integer, or out-of-bounds total', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, total: -1 }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, total: 1.5 }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, total: 10_000_000_000 }).ok).toBe(false);
+    });
+
+    it('rejects a non-array, empty, or oversized items list', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: 'not-an-array' }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: [] }).ok).toBe(false);
+        expect(
+            validateIncomingOrder({ ...VALID_ORDER, items: Array.from({ length: 501 }, () => ({ name: 'x', price: 1, quantity: 1 })) }).ok
+        ).toBe(false);
+    });
+
+    it('rejects an item with an invalid name, price, or quantity', () => {
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: [{ name: '', price: 1000, quantity: 1 }] }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: [{ name: 'Widget', price: -1, quantity: 1 }] }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: [{ name: 'Widget', price: 1000, quantity: 0 }] }).ok).toBe(false);
+        expect(validateIncomingOrder({ ...VALID_ORDER, items: [{ name: 'Widget', price: 1000, quantity: 1.5 }] }).ok).toBe(false);
     });
 });
