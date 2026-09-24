@@ -182,3 +182,36 @@ describe('stock-movement product uuid migration (U3 prep)', () => {
         await db.close();
     });
 });
+
+describe('product sync metadata migration (U3)', () => {
+    afterEach(async () => {
+        await Dexie.delete(DB_NAME);
+    });
+
+    it('backfills synced: 0 and a parseable updatedAt for products that predate sync metadata', async () => {
+        const legacy = new Dexie(DB_NAME);
+        legacy.version(7).stores({
+            products: '++id, name, uuid, archived',
+            operations: 'id, productId, productUuid, timestamp, synced',
+            orders: '++id, date, uuid'
+        });
+        await legacy.open();
+        const productId = (await legacy.table('products').add({
+            uuid: 'product-uuid-1',
+            name: 'Legacy Widget',
+            price: 1950,
+            stock: 5,
+            archived: false
+        })) as number;
+        legacy.close();
+
+        vi.resetModules();
+        const { db } = await import('./db');
+
+        const product = await db.products.get(productId);
+        expect(product?.synced).toBe(0);
+        expect(Number.isNaN(Date.parse(product?.updatedAt ?? ''))).toBe(false);
+
+        await db.close();
+    });
+});

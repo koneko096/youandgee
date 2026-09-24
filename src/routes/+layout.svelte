@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { syncWithCloud } from '$lib/sync';
 
 	// 1. Accept the 'children' snippet (replaces <slot>)
 	let { children } = $props();
@@ -18,6 +19,12 @@
 			// Stash the event so it can be triggered later
 			deferredPrompt = e as BeforeInstallPromptEvent;
 		});
+
+		// Without this, sync only ever ran as a side effect of a local
+		// write (a sale, a stock edit) — a device that reconnects without
+		// touching anything locally would never pull anyone else's changes.
+		void syncWithCloud();
+		window.addEventListener('online', () => void syncWithCloud());
 	});
 
 	async function installApp() {

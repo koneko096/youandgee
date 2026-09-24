@@ -1,7 +1,7 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
-    import { recordStockOperation } from "$lib/sync";
+    import { createProduct, recordStockOperation, updateProductFields } from "$lib/sync";
     import { generateId } from "$lib/domain/id";
     import { toMajorUnits, toMinorUnits } from "$lib/domain/money";
 
@@ -22,7 +22,7 @@
     async function addProduct() {
         if (!name || price <= 0) return;
         const initialStock = stock;
-        const id = (await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock: 0, archived: false })) as number;
+        const id = await createProduct({ uuid: generateId(), name, price: toMinorUnits(price), archived: false });
         // Record initial stock as a ledger movement rather than setting it
         // directly, so stock projections rebuilt from the ledger match.
         if (initialStock > 0) {
@@ -34,12 +34,12 @@
 
     async function archiveProduct(id: number) {
         if (confirm("Archive this product? It will be hidden from sale but its order and stock history stays intact.")) {
-            await db.products.update(id, { archived: true });
+            await updateProductFields(id, { archived: true });
         }
     }
 
     async function restoreProduct(id: number) {
-        await db.products.update(id, { archived: false });
+        await updateProductFields(id, { archived: false });
     }
 
     async function updateStock(id: number, newStock: number) {
@@ -53,7 +53,7 @@
     }
 
     async function updatePrice(id: number, newMajorPrice: number) {
-        await db.products.update(id, { price: toMinorUnits(newMajorPrice) });
+        await updateProductFields(id, { price: toMinorUnits(newMajorPrice) });
     }
 </script>
 

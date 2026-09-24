@@ -7,8 +7,10 @@ interface Product {
     uuid: string; // Canonical cross-device identity (KTD1)
     name: string;
     price: number; // Integer minor units (KTD3) — see src/lib/domain/money.ts
-    stock: number; // Current stock (read-only from ledger summary)
+    stock: number; // Current stock (read-only from ledger summary) — never synced directly; always derived from stock_ledger
     archived: boolean; // Archived products are hidden from sale but never deleted, preserving historical orders and stock movements that reference them (R5)
+    updatedAt: string; // Last local write time; the server arbitrates last-write-wins sync conflicts by this (KTD7)
+    synced: number;    // 0 = pending push, 1 = synced, -1 = rejected by server (invalid, will not be retried)
 }
 
 interface StockOperation {
@@ -163,6 +165,24 @@ class MyDatabase extends Dexie {
                 if (op.productUuid !== undefined) continue;
                 const product = await tx.table('products').get(op.productId);
                 await tx.table('operations').update(op.id, { productUuid: product?.uuid ?? '' });
+            }
+        });
+
+        // Version 8: products become a synced entity (U3), not just stock
+        // movements. Existing local products predate sync metadata entirely;
+        // mark them pending push so they reach the server on the next sync
+        // rather than silently staying local-only forever.
+        this.version(8).stores({
+            products: '++id, name, uuid, archived, synced',
+            operations: 'id, productId, productUuid, timestamp, synced',
+            orders: '++id, date, uuid'
+        }).upgrade(async (tx) => {
+            const products = await tx.table('products').toArray();
+            const now = new Date().toISOString();
+            for (const product of products) {
+                if (product.synced === undefined) {
+                    await tx.table('products').update(product.id, { synced: 0, updatedAt: now });
+                }
             }
         });
     }

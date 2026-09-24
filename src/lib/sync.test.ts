@@ -24,7 +24,9 @@ describe('pullRemoteUpdates', () => {
             name: 'Widget',
             price: 1000,
             stock: 0,
-            archived: false
+            archived: false,
+            synced: 1,
+            updatedAt: '2026-01-01T00:00:00.000Z'
         });
 
         // A remote device recorded a restock this device has never seen. The
@@ -170,7 +172,9 @@ describe('recordStockOperation', () => {
             name: 'Widget',
             price: 1000,
             stock: 5,
-            archived: false
+            archived: false,
+            synced: 1,
+            updatedAt: '2026-01-01T00:00:00.000Z'
         })) as number;
 
         const { recordStockOperation } = await import('./sync');
@@ -187,5 +191,161 @@ describe('recordStockOperation', () => {
 
         const ops = await db.operations.toArray();
         expect(ops).toHaveLength(0);
+    });
+});
+
+describe('createProduct / updateProductFields', () => {
+    beforeEach(async () => {
+        await db.products.clear();
+        vi.stubGlobal('navigator', { onLine: false });
+    });
+
+    it('creates a product stamped as pending sync', async () => {
+        const { createProduct } = await import('./sync');
+        const id = await createProduct({ uuid: 'p-1', name: 'Widget', price: 1000, archived: false });
+
+        const product = await db.products.get(id);
+        expect(product).toMatchObject({ uuid: 'p-1', name: 'Widget', price: 1000, stock: 0, archived: false, synced: 0 });
+        expect(Number.isNaN(Date.parse(product?.updatedAt ?? ''))).toBe(false);
+    });
+
+    it('marks an updated product pending sync again, even if it was already synced', async () => {
+        const id = (await db.products.add({
+            uuid: 'p-1',
+            name: 'Widget',
+            price: 1000,
+            stock: 0,
+            archived: false,
+            synced: 1,
+            updatedAt: '2020-01-01T00:00:00.000Z'
+        })) as number;
+
+        const { updateProductFields } = await import('./sync');
+        await updateProductFields(id, { price: 2000 });
+
+        const product = await db.products.get(id);
+        expect(product?.price).toBe(2000);
+        expect(product?.synced).toBe(0);
+        expect(product?.updatedAt).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+});
+
+describe('pushLocalProducts', () => {
+    beforeEach(async () => {
+        await db.products.clear();
+    });
+
+    it('sends only wire-safe fields and marks processed products synced', async () => {
+        const id = (await db.products.add({
+            uuid: 'p-1',
+            name: 'Widget',
+            price: 1000,
+            stock: 7,
+            archived: false,
+            synced: 0,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        })) as number;
+
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ success: true, processedUuids: ['p-1'], rejected: [] })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { pushLocalProducts } = await import('./sync');
+        await pushLocalProducts();
+
+        const [, requestInit] = fetchMock.mock.calls[0];
+        const sentBody = JSON.parse(requestInit.body as string);
+        expect(sentBody.products).toEqual([
+            { uuid: 'p-1', name: 'Widget', price: 1000, archived: false, updatedAt: '2026-01-01T00:00:00.000Z' }
+        ]);
+
+        const product = await db.products.get(id);
+        expect(product?.synced).toBe(1);
+    });
+
+    it('marks server-rejected products rejected (synced: -1) rather than retrying forever', async () => {
+        await db.products.add({
+            uuid: 'bad',
+            name: '',
+            price: 1000,
+            stock: 0,
+            archived: false,
+            synced: 0,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ success: true, processedUuids: [], rejected: [{ uuid: 'bad', error: 'name must be a non-empty string' }] })
+            })
+        );
+
+        const { pushLocalProducts } = await import('./sync');
+        await pushLocalProducts();
+
+        const product = await db.products.where('uuid').equals('bad').first();
+        expect(product?.synced).toBe(-1);
+    });
+});
+
+describe('pullRemoteProducts', () => {
+    beforeEach(async () => {
+        await db.products.clear();
+        vi.stubGlobal('localStorage', fakeLocalStorage());
+    });
+
+    it('inserts a product this device has never seen, defaulting stock to zero (a rebuildable projection)', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({
+                    products: [{ uuid: 'remote-p-1', name: 'Remote Widget', price: 500, archived: false, updatedAt: '2026-01-01T00:00:00.000Z' }],
+                    timestamp: '2026-01-01T00:00:01.000Z'
+                })
+            })
+        );
+
+        const { pullRemoteProducts } = await import('./sync');
+        await pullRemoteProducts();
+
+        const product = await db.products.where('uuid').equals('remote-p-1').first();
+        expect(product).toMatchObject({ name: 'Remote Widget', price: 500, stock: 0, synced: 1 });
+    });
+
+    it('applies a remote update only when it is newer than the local one (last-write-wins)', async () => {
+        await db.products.add({
+            uuid: 'p-1',
+            name: 'Local Name',
+            price: 1000,
+            stock: 3,
+            archived: false,
+            synced: 1,
+            updatedAt: '2026-06-01T00:00:00.000Z'
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({
+                    products: [{ uuid: 'p-1', name: 'Stale Remote Name', price: 999, archived: false, updatedAt: '2026-01-01T00:00:00.000Z' }],
+                    timestamp: '2026-06-02T00:00:00.000Z'
+                })
+            })
+        );
+
+        const { pullRemoteProducts } = await import('./sync');
+        await pullRemoteProducts();
+
+        const product = await db.products.where('uuid').equals('p-1').first();
+        // Stale remote write must not clobber the newer local one, and stock
+        // (never part of the sync payload) must be untouched either way.
+        expect(product?.name).toBe('Local Name');
+        expect(product?.stock).toBe(3);
     });
 });
