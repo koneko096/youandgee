@@ -1,5 +1,4 @@
 -- Cloudflare D1 Schema for Event Sourcing Stock Ledger
--- Run this in Cloudflare D1 console or via migrations
 
 -- Primary audit log table for all stock operations
 CREATE TABLE IF NOT EXISTS stock_ledger (
