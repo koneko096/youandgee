@@ -16,7 +16,7 @@ interface StockOperation {
     productId: number;        // Reference to product
     quantityChange: number;   // e.g., +50 (restock), -2 (sale)
     timestamp: string;        // ISO String
-    synced: number;           // 0 = false, 1 = true
+    synced: number;           // 0 = pending push, 1 = synced, -1 = rejected by server (invalid, will not be retried)
     reason?: 'sale' | 'restock' | 'adjustment' | 'return'; // Optional metadata
 }
 

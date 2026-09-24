@@ -12,7 +12,7 @@ export async function syncLedgerWithCloud() {
     await pullRemoteUpdates();
 }
 
-async function pushLocalOperations() {
+export async function pushLocalOperations() {
     const unsyncedOps = await db.operations.where('synced').equals(0).toArray();
 
     if (unsyncedOps.length === 0) return;
@@ -24,7 +24,7 @@ async function pushLocalOperations() {
             body: JSON.stringify({ operations: unsyncedOps })
         });
 
-        const { success, processedIds, error } = await response.json();
+        const { success, processedIds, rejected, error } = await response.json();
 
         if (!success) {
             throw new Error(error || 'Sync failed');
@@ -36,6 +36,17 @@ async function pushLocalOperations() {
                 .where('id')
                 .anyOf(processedIds)
                 .modify({ synced: 1 });
+        }
+
+        // The server rejected these as invalid — they will never become
+        // valid on retry, so mark them rejected (synced: -1) instead of
+        // leaving them at 0, where they would be resent every sync forever.
+        if (rejected && rejected.length > 0) {
+            const rejectedIds = rejected.map((r: { id?: string }) => r.id).filter(Boolean);
+            if (rejectedIds.length > 0) {
+                await db.operations.where('id').anyOf(rejectedIds).modify({ synced: -1 });
+            }
+            console.error('Server rejected local operations as invalid:', rejected);
         }
     } catch (err) {
         console.error('Push sync failed, will retry when online:', err);

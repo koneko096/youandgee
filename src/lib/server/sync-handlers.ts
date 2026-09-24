@@ -1,3 +1,5 @@
+import { validateIncomingOperation } from './validation';
+
 /**
  * Sync ledger business logic, shared by every place that serves it (currently
  * the Cloudflare Pages Functions in `functions/api/`). Kept independent of any
@@ -22,9 +24,29 @@ export interface IncomingStockOperation {
     reason?: 'sale' | 'restock' | 'adjustment' | 'return';
 }
 
-export async function pushStockOperations(db: D1Like, operations: IncomingStockOperation[]) {
+export interface RejectedOperation {
+    id: string | undefined;
+    error: string;
+}
+
+export async function pushStockOperations(db: D1Like, rawOperations: unknown[]) {
+    const operations: IncomingStockOperation[] = [];
+    const rejected: RejectedOperation[] = [];
+
+    for (const raw of rawOperations) {
+        const result = validateIncomingOperation(raw);
+        if (result.ok) {
+            operations.push(result.value);
+        } else {
+            const id = typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).id === 'string'
+                ? ((raw as Record<string, unknown>).id as string)
+                : undefined;
+            rejected.push({ id, error: result.error });
+        }
+    }
+
     if (!operations.length) {
-        return { success: true as const, processedIds: [] as string[] };
+        return { success: true as const, processedIds: [] as string[], rejected };
     }
 
     const ledgerStatements = operations.map((op) =>
@@ -52,7 +74,7 @@ export async function pushStockOperations(db: D1Like, operations: IncomingStockO
     );
     await db.batch(summaryStatements);
 
-    return { success: true as const, processedIds: operations.map((op) => op.id) };
+    return { success: true as const, processedIds: operations.map((op) => op.id), rejected };
 }
 
 export async function pullStockOperations(db: D1Like, since: string) {

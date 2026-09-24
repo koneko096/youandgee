@@ -16,7 +16,7 @@ describe('pushStockOperations', () => {
     it('returns success with no processed ids when there is nothing to push', async () => {
         const db = fakeDb();
         const result = await pushStockOperations(db, []);
-        expect(result).toEqual({ success: true, processedIds: [] });
+        expect(result).toEqual({ success: true, processedIds: [], rejected: [] });
         expect(db.batch).not.toHaveBeenCalled();
     });
 
@@ -29,9 +29,38 @@ describe('pushStockOperations', () => {
 
         const result = await pushStockOperations(db, operations);
 
-        expect(result).toEqual({ success: true, processedIds: ['op-1', 'op-2'] });
+        expect(result).toEqual({ success: true, processedIds: ['op-1', 'op-2'], rejected: [] });
         // One batch for the ledger insert, one batch for the summary upsert.
         expect(db.batch).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects invalid operations without writing them, but still processes the valid ones in the same batch', async () => {
+        const db = fakeDb();
+        const operations = [
+            { id: 'op-1', productId: 1, quantityChange: -2, timestamp: '2026-01-01T00:00:00.000Z' },
+            { id: 'op-bad', productId: 1, quantityChange: 0, timestamp: '2026-01-01T00:00:00.000Z' },
+            { productId: 1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
+        ];
+
+        const result = await pushStockOperations(db, operations);
+
+        expect(result.success).toBe(true);
+        expect(result.processedIds).toEqual(['op-1']);
+        expect(result.rejected).toHaveLength(2);
+        expect(result.rejected[0]).toMatchObject({ id: 'op-bad' });
+        expect(result.rejected[1]).toMatchObject({ id: undefined });
+    });
+
+    it('reports every operation as rejected and writes nothing when all are invalid', async () => {
+        const db = fakeDb();
+        const result = await pushStockOperations(db, [{ id: 'op-1', productId: -1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }]);
+
+        expect(result).toEqual({
+            success: true,
+            processedIds: [],
+            rejected: [{ id: 'op-1', error: expect.any(String) }]
+        });
+        expect(db.batch).not.toHaveBeenCalled();
     });
 
     it('defaults a missing reason to adjustment when preparing the ledger insert', async () => {

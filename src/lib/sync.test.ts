@@ -57,3 +57,43 @@ describe('pullRemoteUpdates', () => {
         expect(storedOp?.synced).toBe(1);
     });
 });
+
+describe('pushLocalOperations', () => {
+    beforeEach(async () => {
+        await db.products.clear();
+        await db.operations.clear();
+    });
+
+    it('marks server-rejected operations as rejected (synced: -1) instead of leaving them pending forever', async () => {
+        await db.operations.add({
+            id: 'bad-op',
+            productId: 1,
+            quantityChange: 5,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            synced: 0,
+            reason: 'sale'
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({
+                    success: true,
+                    processedIds: [],
+                    rejected: [{ id: 'bad-op', error: 'productId must reference an existing product' }]
+                })
+            })
+        );
+
+        const { pushLocalOperations } = await import('./sync');
+        await pushLocalOperations();
+
+        const op = await db.operations.get('bad-op');
+        expect(op?.synced).toBe(-1);
+
+        // A rejected op must not be picked up by the next sync's pending query.
+        const stillPending = await db.operations.where('synced').equals(0).toArray();
+        expect(stillPending).toHaveLength(0);
+    });
+});
