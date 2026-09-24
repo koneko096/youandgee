@@ -2,6 +2,7 @@
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
     import { recordStockOperation } from "$lib/sync";
+    import { generateId } from "$lib/domain/id";
 
     let name = $state("");
     let price = $state(0);
@@ -19,7 +20,7 @@
 
     async function addProduct() {
         if (!name || price <= 0) return;
-        await db.products.add({ name, price, stock });
+        await db.products.add({ uuid: generateId(), name, price, stock });
         // Reset form
         name = ""; price = 0; stock = 0;
     }

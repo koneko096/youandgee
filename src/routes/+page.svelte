@@ -3,6 +3,7 @@
     import { db } from "$lib/db";
     import type { Product } from "$lib/db";
     import { recordStockOperation } from "$lib/sync";
+    import { generateId } from "$lib/domain/id";
 
     // --- DATA ---
     let products = $state(liveQuery(() => db.products.toArray()));
@@ -84,6 +85,7 @@
         }
 
         const orderId = await db.orders.add({
+            uuid: generateId(),
             date: new Date(),
             total: total,
             customerName: customerName.trim(),

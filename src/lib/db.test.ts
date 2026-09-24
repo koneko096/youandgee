@@ -9,8 +9,9 @@ describe('db (smoke)', () => {
     });
 
     it('opens the local Dexie database and round-trips a product', async () => {
-        const id = await db.products.add({ name: 'Widget', price: 1000, stock: 5 });
+        const uuid = 'e2c1f1c0-0000-4000-8000-000000000000';
+        const id = await db.products.add({ uuid, name: 'Widget', price: 1000, stock: 5 });
         const product = await db.products.get(id);
-        expect(product).toMatchObject({ name: 'Widget', price: 1000, stock: 5 });
+        expect(product).toMatchObject({ uuid, name: 'Widget', price: 1000, stock: 5 });
     });
 });

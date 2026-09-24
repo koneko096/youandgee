@@ -1,7 +1,9 @@
 import { Dexie, type EntityTable } from 'dexie';
+import { generateId } from './domain/id';
 
 interface Product {
-    id?: number; // Auto-incremented
+    id?: number; // Auto-incremented local key
+    uuid: string; // Canonical cross-device identity (KTD1)
     name: string;
     price: number;
     stock: number; // Current stock (read-only from ledger summary)
@@ -18,6 +20,7 @@ interface StockOperation {
 
 interface Order {
     id?: number;
+    uuid: string; // Canonical cross-device identity (KTD1)
     date: Date;
     items: { name: string; price: number; quantity: number }[];
     total: number;
@@ -70,6 +73,30 @@ class MyDatabase extends Dexie {
                         ...op,
                         id: op.id.toString()
                     });
+                }
+            }
+        });
+
+        // Version 4: canonical UUID identity for products and orders (KTD1).
+        // Stock operations already carry a UUID id; this backfills the same
+        // cross-device identity onto the two entities that still relied on
+        // Dexie's device-local auto-increment key.
+        this.version(4).stores({
+            products: '++id, name, uuid',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        }).upgrade(async (tx) => {
+            const products = await tx.table('products').toArray();
+            for (const product of products) {
+                if (!product.uuid) {
+                    await tx.table('products').update(product.id, { uuid: generateId() });
+                }
+            }
+
+            const orders = await tx.table('orders').toArray();
+            for (const order of orders) {
+                if (!order.uuid) {
+                    await tx.table('orders').update(order.id, { uuid: generateId() });
                 }
             }
         });
