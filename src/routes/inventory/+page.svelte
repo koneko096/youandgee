@@ -3,6 +3,7 @@
     import { db } from "$lib/db";
     import { recordStockOperation } from "$lib/sync";
     import { generateId } from "$lib/domain/id";
+    import { toMajorUnits, toMinorUnits } from "$lib/domain/money";
 
     let name = $state("");
     let price = $state(0);
@@ -20,7 +21,7 @@
 
     async function addProduct() {
         if (!name || price <= 0) return;
-        await db.products.add({ uuid: generateId(), name, price, stock });
+        await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock });
         // Reset form
         name = ""; price = 0; stock = 0;
     }
@@ -41,8 +42,8 @@
         }
     }
 
-    async function updatePrice(id: number, newPrice: number) {
-        await db.products.update(id, { price: newPrice });
+    async function updatePrice(id: number, newMajorPrice: number) {
+        await db.products.update(id, { price: toMinorUnits(newMajorPrice) });
     }
 </script>
 
@@ -85,7 +86,7 @@
                 <tr>
                     <td class="name-cell"><strong>{p.name}</strong></td>
                     <td class="input-cell">
-                        <input type="number" value={p.price} step="0.01" onchange={(e)=> updatePrice(p.id!,
+                        <input type="number" value={toMajorUnits(p.price)} step="0.01" onchange={(e)=> updatePrice(p.id!,
                         parseFloat(e.currentTarget.value))} />
                     </td>
                     <td class="input-cell">

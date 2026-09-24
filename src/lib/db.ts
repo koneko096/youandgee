@@ -1,11 +1,12 @@
 import { Dexie, type EntityTable } from 'dexie';
 import { generateId } from './domain/id';
+import { toMinorUnits } from './domain/money';
 
 interface Product {
     id?: number; // Auto-incremented local key
     uuid: string; // Canonical cross-device identity (KTD1)
     name: string;
-    price: number;
+    price: number; // Integer minor units (KTD3) — see src/lib/domain/money.ts
     stock: number; // Current stock (read-only from ledger summary)
 }
 
@@ -22,8 +23,8 @@ interface Order {
     id?: number;
     uuid: string; // Canonical cross-device identity (KTD1)
     date: Date;
-    items: { name: string; price: number; quantity: number }[];
-    total: number;
+    items: { name: string; price: number; quantity: number }[]; // price: integer minor units (KTD3)
+    total: number; // Integer minor units (KTD3)
     customerName: string;
 }
 
@@ -98,6 +99,31 @@ class MyDatabase extends Dexie {
                 if (!order.uuid) {
                     await tx.table('orders').update(order.id, { uuid: generateId() });
                 }
+            }
+        });
+
+        // Version 5: store money as integer minor units instead of float
+        // major units (KTD3) — floating-point totals cannot be the authority
+        // for historical receipts and exports.
+        this.version(5).stores({
+            products: '++id, name, uuid',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        }).upgrade(async (tx) => {
+            const products = await tx.table('products').toArray();
+            for (const product of products) {
+                await tx.table('products').update(product.id, { price: toMinorUnits(product.price) });
+            }
+
+            const orders = await tx.table('orders').toArray();
+            for (const order of orders) {
+                await tx.table('orders').update(order.id, {
+                    total: toMinorUnits(order.total),
+                    items: order.items.map((item: { name: string; price: number; quantity: number }) => ({
+                        ...item,
+                        price: toMinorUnits(item.price)
+                    }))
+                });
             }
         });
     }

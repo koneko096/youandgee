@@ -1,6 +1,7 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
+    import { formatMoney } from "$lib/domain/money";
 
     // --- DATA ---
     let orders = $state(liveQuery(() => db.orders.orderBy('date').reverse().toArray()));
@@ -37,7 +38,7 @@
                         </div>
                     </div>
                     <div class="order-total-section">
-                        <span class="total-amount">Rp {order.total.toFixed(2)}</span>
+                        <span class="total-amount">{formatMoney(order.total)}</span>
                         <span class="expand-icon">{expandedOrderId === order.id ? '▼' : '▶'}</span>
                     </div>
                 </button>
@@ -49,14 +50,14 @@
                         <div class="item-row">
                             <span class="item-name">{item.name}</span>
                             <span class="item-qty">x{item.quantity}</span>
-                            <span class="item-price">Rp {item.price.toFixed(2)}</span>
-                            <span class="item-subtotal">Rp {(item.price * item.quantity).toFixed(2)}</span>
+                            <span class="item-price">{formatMoney(item.price)}</span>
+                            <span class="item-subtotal">{formatMoney(item.price * item.quantity)}</span>
                         </div>
                         {/each}
                     </div>
                     <div class="details-footer">
                         <strong>Total:</strong>
-                        <strong>Rp {order.total.toFixed(2)}</strong>
+                        <strong>{formatMoney(order.total)}</strong>
                     </div>
                 </div>
                 {/if}

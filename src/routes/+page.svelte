@@ -4,6 +4,7 @@
     import type { Product } from "$lib/db";
     import { recordStockOperation } from "$lib/sync";
     import { generateId } from "$lib/domain/id";
+    import { formatMoney } from "$lib/domain/money";
 
     // --- DATA ---
     let products = $state(liveQuery(() => db.products.toArray()));
@@ -127,7 +128,7 @@
                 disabled={p.stock <= 0} class:out-of-stock={p.stock <=0}>
                     <div class="p-info">
                         <h3>{p.name}</h3>
-                        <span class="price">Rp {p.price.toFixed(2)}</span>
+                        <span class="price">{formatMoney(p.price)}</span>
                     </div>
                     <small class:warning={p.stock < 5} class="stock-tag">
                         {p.stock > 0 ? `${p.stock} in stock` : 'Out of stock'}
@@ -173,13 +174,13 @@
                 <div class="row-info">
                     <strong>{item.product.name}</strong>
                     <div class="qty-control">
-                        <span>Rp {item.product.price.toFixed(2)} ×</span>
+                        <span>{formatMoney(item.product.price)} ×</span>
                         <input type="number" value={item.qty} min="0" max={item.product.stock} oninput={(e)=>
                         updateCartQty(i, parseInt(e.currentTarget.value) || 0)} />
                     </div>
                 </div>
                 <div class="row-total">
-                    <span class="subtotal">Rp {(item.product.price * item.qty).toFixed(2)}</span>
+                    <span class="subtotal">{formatMoney(item.product.price * item.qty)}</span>
                     <button class="del-btn" onclick={()=> removeFromCart(i)} title="Remove">✕</button>
                 </div>
             </div>
@@ -199,7 +200,7 @@
             </div>
             <div class="summary-line">
                 <span>Total Amount:</span>
-                <span class="grand-total">Rp {total.toFixed(2)}</span>
+                <span class="grand-total">{formatMoney(total)}</span>
             </div>
             <button class="checkout-btn primary-btn" onclick={checkout} disabled={cart.length===0}>
                 Place Order & Print Receipt
@@ -213,7 +214,7 @@
     <button class="primary-btn toggle-btn" onclick={() => isCartOpen = true}>
         <div class="toggle-content">
             <span>🛒 {cart.length} items</span>
-            <span class="toggle-total">Rp {total.toFixed(2)}</span>
+            <span class="toggle-total">{formatMoney(total)}</span>
         </div>
     </button>
 </div>
@@ -232,14 +233,14 @@
             {#each cart as item, i (i)}
             <div class="receipt-row">
                 <span>{item.product.name} (x{item.qty})</span>
-                <span>Rp {(item.product.price * item.qty).toFixed(2)}</span>
+                <span>{formatMoney(item.product.price * item.qty)}</span>
             </div>
             {/each}
         </div>
         <div class="receipt-footer">
             <div class="final-total">
                 <span>TOTAL PAID</span>
-                <span>Rp {total.toFixed(2)}</span>
+                <span>{formatMoney(total)}</span>
             </div>
             <p class="thanks">Thank you for your business!</p>
         </div>
