@@ -21,15 +21,19 @@
 
     async function addProduct() {
         if (!name || price <= 0) return;
-        await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock });
+        await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock, archived: false });
         // Reset form
         name = ""; price = 0; stock = 0;
     }
 
-    async function deleteProduct(id: number) {
-        if (confirm("Are you sure you want to delete this product?")) {
-            await db.products.delete(id);
+    async function archiveProduct(id: number) {
+        if (confirm("Archive this product? It will be hidden from sale but its order and stock history stays intact.")) {
+            await db.products.update(id, { archived: true });
         }
+    }
+
+    async function restoreProduct(id: number) {
+        await db.products.update(id, { archived: false });
     }
 
     async function updateStock(id: number, newStock: number) {
@@ -83,20 +87,27 @@
             </thead>
             <tbody>
                 {#each filteredProducts as p (p.id)}
-                <tr>
-                    <td class="name-cell"><strong>{p.name}</strong></td>
+                <tr class:archived-row={p.archived}>
+                    <td class="name-cell">
+                        <strong>{p.name}</strong>
+                        {#if p.archived}<span class="archived-badge">Archived</span>{/if}
+                    </td>
                     <td class="input-cell">
-                        <input type="number" value={toMajorUnits(p.price)} step="0.01" onchange={(e)=> updatePrice(p.id!,
+                        <input type="number" value={toMajorUnits(p.price)} step="0.01" disabled={p.archived} onchange={(e)=> updatePrice(p.id!,
                         parseFloat(e.currentTarget.value))} />
                     </td>
                     <td class="input-cell">
-                        <input type="number" value={p.stock} onchange={(e)=> updateStock(p.id!,
+                        <input type="number" value={p.stock} disabled={p.archived} onchange={(e)=> updateStock(p.id!,
                         parseInt(e.currentTarget.value))}
                         class:low-stock={p.stock
                         < 5} />
                     </td>
                     <td>
-                        <button class="delete-btn" onclick={()=> deleteProduct(p.id!)}>Delete</button>
+                        {#if p.archived}
+                        <button class="secondary-btn" onclick={()=> restoreProduct(p.id!)}>Restore</button>
+                        {:else}
+                        <button class="delete-btn" onclick={()=> archiveProduct(p.id!)}>Archive</button>
+                        {/if}
                     </td>
                 </tr>
                 {/each}
@@ -254,5 +265,34 @@
     .delete-btn:hover {
         background: #c53030;
         color: white;
+    }
+
+    .secondary-btn {
+        background: #edf2f7;
+        color: #4a5568;
+        border: 1px solid #e2e8f0;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    .secondary-btn:hover {
+        background: #e2e8f0;
+    }
+
+    .archived-row {
+        opacity: 0.6;
+    }
+
+    .archived-badge {
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #edf2f7;
+        color: #718096;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
     }
 </style>

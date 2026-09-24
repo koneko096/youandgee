@@ -8,6 +8,7 @@ interface Product {
     name: string;
     price: number; // Integer minor units (KTD3) — see src/lib/domain/money.ts
     stock: number; // Current stock (read-only from ledger summary)
+    archived: boolean; // Archived products are hidden from sale but never deleted, preserving historical orders and stock movements that reference them (R5)
 }
 
 interface StockOperation {
@@ -124,6 +125,23 @@ class MyDatabase extends Dexie {
                         price: toMinorUnits(item.price)
                     }))
                 });
+            }
+        });
+
+        // Version 6: archived-product lifecycle (R5). Deleting a product row
+        // would orphan the stock movements and (pre-U2b) references that
+        // still point at it; archiving hides it from sale while keeping
+        // history intact.
+        this.version(6).stores({
+            products: '++id, name, uuid, archived',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        }).upgrade(async (tx) => {
+            const products = await tx.table('products').toArray();
+            for (const product of products) {
+                if (product.archived === undefined) {
+                    await tx.table('products').update(product.id, { archived: false });
+                }
             }
         });
     }

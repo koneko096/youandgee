@@ -84,3 +84,34 @@ describe('integer minor-unit money migration (U2c)', () => {
         await db.close();
     });
 });
+
+describe('archived-product lifecycle migration (U2c)', () => {
+    afterEach(async () => {
+        await Dexie.delete(DB_NAME);
+    });
+
+    it('backfills archived: false for products that predate the archive flag', async () => {
+        const legacy = new Dexie(DB_NAME);
+        legacy.version(5).stores({
+            products: '++id, name, uuid',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        });
+        await legacy.open();
+        const productId = (await legacy.table('products').add({
+            uuid: 'p-1',
+            name: 'Legacy Widget',
+            price: 1950,
+            stock: 3
+        })) as number;
+        legacy.close();
+
+        vi.resetModules();
+        const { db } = await import('./db');
+
+        const product = await db.products.get(productId);
+        expect(product?.archived).toBe(false);
+
+        await db.close();
+    });
+});

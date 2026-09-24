@@ -21,7 +21,7 @@
     // --- COMPUTED (Derived) ---
     let filteredProducts = $derived(
         ($products || []).filter(p =>
-            p.name.toLowerCase().includes(searchTerm.toLowerCase())
+            !p.archived && p.name.toLowerCase().includes(searchTerm.toLowerCase())
         )
     );
 
