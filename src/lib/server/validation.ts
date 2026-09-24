@@ -59,3 +59,62 @@ export function validateIncomingOperation(raw: unknown): ValidationResult {
         }
     };
 }
+
+const MAX_PRICE_MINOR_UNITS = 1_000_000_000; // 10,000,000.00 in the smallest displayed currency unit
+const MAX_NAME_LENGTH = 200;
+
+export interface IncomingProduct {
+    uuid: string;
+    name: string;
+    price: number;
+    archived: boolean;
+    updatedAt: string;
+}
+
+export type ProductValidationResult =
+    | { ok: true; value: IncomingProduct }
+    | { ok: false; error: string };
+
+export function validateIncomingProduct(raw: unknown): ProductValidationResult {
+    if (typeof raw !== 'object' || raw === null) {
+        return { ok: false, error: 'product must be an object' };
+    }
+
+    const p = raw as Record<string, unknown>;
+
+    if (typeof p.uuid !== 'string' || p.uuid.length === 0 || p.uuid.length > MAX_ID_LENGTH) {
+        return { ok: false, error: 'uuid must be a non-empty string' };
+    }
+
+    if (typeof p.name !== 'string' || p.name.trim().length === 0 || p.name.length > MAX_NAME_LENGTH) {
+        return { ok: false, error: 'name must be a non-empty string' };
+    }
+
+    if (
+        typeof p.price !== 'number' ||
+        !Number.isInteger(p.price) ||
+        p.price < 0 ||
+        p.price > MAX_PRICE_MINOR_UNITS
+    ) {
+        return { ok: false, error: 'price must be a non-negative, bounded integer (minor units)' };
+    }
+
+    if (typeof p.archived !== 'boolean') {
+        return { ok: false, error: 'archived must be a boolean' };
+    }
+
+    if (typeof p.updatedAt !== 'string' || p.updatedAt.length === 0 || Number.isNaN(Date.parse(p.updatedAt))) {
+        return { ok: false, error: 'updatedAt must be a parseable date string' };
+    }
+
+    return {
+        ok: true,
+        value: {
+            uuid: p.uuid,
+            name: p.name,
+            price: p.price,
+            archived: p.archived,
+            updatedAt: p.updatedAt
+        }
+    };
+}
