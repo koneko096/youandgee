@@ -18,7 +18,7 @@ export interface D1Like {
 
 export interface IncomingStockOperation {
     id: string;
-    productId: number;
+    productUuid: string;
     quantityChange: number;
     timestamp: string;
     reason?: 'sale' | 'restock' | 'adjustment' | 'return';
@@ -52,11 +52,11 @@ export async function pushStockOperations(db: D1Like, rawOperations: unknown[]) 
     const ledgerStatements = operations.map((op) =>
         db
             .prepare(
-                `INSERT INTO stock_ledger (id, product_id, quantity_change, created_at, reason)
+                `INSERT INTO stock_ledger (id, product_uuid, quantity_change, created_at, reason)
                  VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO NOTHING`
             )
-            .bind(op.id, op.productId, op.quantityChange, op.timestamp, op.reason ?? 'adjustment')
+            .bind(op.id, op.productUuid, op.quantityChange, op.timestamp, op.reason ?? 'adjustment')
     );
     await db.batch(ledgerStatements);
 
@@ -64,13 +64,13 @@ export async function pushStockOperations(db: D1Like, rawOperations: unknown[]) 
     const summaryStatements = operations.map((op) =>
         db
             .prepare(
-                `INSERT INTO product_stock_summary (product_id, current_stock, updated_at)
+                `INSERT INTO product_stock_summary (product_uuid, current_stock, updated_at)
                  VALUES (?, ?, ?)
-                 ON CONFLICT(product_id) DO UPDATE SET
+                 ON CONFLICT(product_uuid) DO UPDATE SET
                      current_stock = current_stock + excluded.current_stock,
                      updated_at = excluded.updated_at`
             )
-            .bind(op.productId, op.quantityChange, updatedAt)
+            .bind(op.productUuid, op.quantityChange, updatedAt)
     );
     await db.batch(summaryStatements);
 
@@ -80,7 +80,7 @@ export async function pushStockOperations(db: D1Like, rawOperations: unknown[]) 
 export async function pullStockOperations(db: D1Like, since: string) {
     const result = await db
         .prepare(
-            `SELECT id, product_id as productId, quantity_change as quantityChange, created_at as timestamp, reason
+            `SELECT id, product_uuid as productUuid, quantity_change as quantityChange, created_at as timestamp, reason
              FROM stock_ledger
              WHERE created_at > ?
              ORDER BY created_at ASC`

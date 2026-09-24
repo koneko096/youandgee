@@ -26,8 +26,8 @@ export function validateIncomingOperation(raw: unknown): ValidationResult {
         return { ok: false, error: 'id must be a non-empty string' };
     }
 
-    if (typeof op.productId !== 'number' || !Number.isInteger(op.productId) || op.productId <= 0) {
-        return { ok: false, error: 'productId must be a positive integer' };
+    if (typeof op.productUuid !== 'string' || op.productUuid.length === 0 || op.productUuid.length > MAX_ID_LENGTH) {
+        return { ok: false, error: 'productUuid must be a non-empty string' };
     }
 
     if (
@@ -52,7 +52,7 @@ export function validateIncomingOperation(raw: unknown): ValidationResult {
         ok: true,
         value: {
             id: op.id,
-            productId: op.productId,
+            productUuid: op.productUuid,
             quantityChange: op.quantityChange,
             timestamp: op.timestamp,
             reason: op.reason as IncomingStockOperation['reason']

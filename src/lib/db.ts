@@ -13,7 +13,8 @@ interface Product {
 
 interface StockOperation {
     id?: string;              // Client-generated UUID
-    productId: number;        // Reference to product
+    productId: number;        // Device-local product key — only meaningful on this device, never sent to the sync server (see productUuid)
+    productUuid: string;      // Canonical cross-device product identity (KTD1) — the authoritative reference once this movement is synced
     quantityChange: number;   // e.g., +50 (restock), -2 (sale)
     timestamp: string;        // ISO String
     synced: number;           // 0 = pending push, 1 = synced, -1 = rejected by server (invalid, will not be retried)
@@ -142,6 +143,26 @@ class MyDatabase extends Dexie {
                 if (product.archived === undefined) {
                     await tx.table('products').update(product.id, { archived: false });
                 }
+            }
+        });
+
+        // Version 7: key stock movements by the product's canonical uuid
+        // (KTD1), not just its device-local numeric id. A device-local id
+        // has no meaning to another device — this is what makes stock
+        // movements actually resolvable once they cross the sync boundary
+        // (U3). A movement whose product no longer exists locally gets an
+        // empty productUuid; it cannot be reliably resolved and is treated
+        // as legacy/orphaned rather than guessed at.
+        this.version(7).stores({
+            products: '++id, name, uuid, archived',
+            operations: 'id, productId, productUuid, timestamp, synced',
+            orders: '++id, date, uuid'
+        }).upgrade(async (tx) => {
+            const operations = await tx.table('operations').toArray();
+            for (const op of operations) {
+                if (op.productUuid !== undefined) continue;
+                const product = await tx.table('products').get(op.productId);
+                await tx.table('operations').update(op.id, { productUuid: product?.uuid ?? '' });
             }
         });
     }

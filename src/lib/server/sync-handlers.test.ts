@@ -23,8 +23,8 @@ describe('pushStockOperations', () => {
     it('writes both the ledger and the summary batch, then reports every processed id', async () => {
         const db = fakeDb();
         const operations = [
-            { id: 'op-1', productId: 1, quantityChange: -2, timestamp: '2026-01-01T00:00:00.000Z', reason: 'sale' as const },
-            { id: 'op-2', productId: 2, quantityChange: 5, timestamp: '2026-01-01T00:00:01.000Z' }
+            { id: 'op-1', productUuid: 'product-uuid-1', quantityChange: -2, timestamp: '2026-01-01T00:00:00.000Z', reason: 'sale' as const },
+            { id: 'op-2', productUuid: 'product-uuid-2', quantityChange: 5, timestamp: '2026-01-01T00:00:01.000Z' }
         ];
 
         const result = await pushStockOperations(db, operations);
@@ -37,9 +37,9 @@ describe('pushStockOperations', () => {
     it('rejects invalid operations without writing them, but still processes the valid ones in the same batch', async () => {
         const db = fakeDb();
         const operations = [
-            { id: 'op-1', productId: 1, quantityChange: -2, timestamp: '2026-01-01T00:00:00.000Z' },
-            { id: 'op-bad', productId: 1, quantityChange: 0, timestamp: '2026-01-01T00:00:00.000Z' },
-            { productId: 1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
+            { id: 'op-1', productUuid: 'product-uuid-1', quantityChange: -2, timestamp: '2026-01-01T00:00:00.000Z' },
+            { id: 'op-bad', productUuid: 'product-uuid-1', quantityChange: 0, timestamp: '2026-01-01T00:00:00.000Z' },
+            { productUuid: 'product-uuid-1', quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
         ];
 
         const result = await pushStockOperations(db, operations);
@@ -53,7 +53,7 @@ describe('pushStockOperations', () => {
 
     it('reports every operation as rejected and writes nothing when all are invalid', async () => {
         const db = fakeDb();
-        const result = await pushStockOperations(db, [{ id: 'op-1', productId: -1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }]);
+        const result = await pushStockOperations(db, [{ id: 'op-1', productUuid: '', quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }]);
 
         expect(result).toEqual({
             success: true,
@@ -68,10 +68,10 @@ describe('pushStockOperations', () => {
         const db = fakeDb({ prepare: vi.fn().mockReturnValue({ bind, all: vi.fn() }) });
 
         await pushStockOperations(db, [
-            { id: 'op-1', productId: 1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
+            { id: 'op-1', productUuid: 'product-uuid-1', quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
         ]);
 
-        expect(bind).toHaveBeenCalledWith('op-1', 1, 1, '2026-01-01T00:00:00.000Z', 'adjustment');
+        expect(bind).toHaveBeenCalledWith('op-1', 'product-uuid-1', 1, '2026-01-01T00:00:00.000Z', 'adjustment');
     });
 
     it('includes updated_at when upserting the summary row, satisfying its NOT NULL constraint', async () => {
@@ -85,7 +85,7 @@ describe('pushStockOperations', () => {
         });
 
         await pushStockOperations(db, [
-            { id: 'op-1', productId: 1, quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
+            { id: 'op-1', productUuid: 'product-uuid-1', quantityChange: 1, timestamp: '2026-01-01T00:00:00.000Z' }
         ]);
 
         const summarySql = preparedSql.find((sql) => sql.includes('product_stock_summary'));
@@ -99,7 +99,7 @@ describe('pushStockOperations', () => {
 
 describe('pullStockOperations', () => {
     it('returns remote operations since the given cursor plus a fresh timestamp', async () => {
-        const rows = [{ id: 'op-9', productId: 1, quantityChange: 3, timestamp: '2026-02-01T00:00:00.000Z', reason: 'restock' }];
+        const rows = [{ id: 'op-9', productUuid: 'product-uuid-1', quantityChange: 3, timestamp: '2026-02-01T00:00:00.000Z', reason: 'restock' }];
         const db = fakeDb({
             prepare: vi.fn().mockReturnValue({
                 bind: vi.fn().mockReturnThis(),

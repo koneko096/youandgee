@@ -3,7 +3,7 @@ import { validateIncomingOperation } from './validation';
 
 const VALID = {
     id: 'op-1',
-    productId: 1,
+    productUuid: 'product-uuid-1',
     quantityChange: -2,
     timestamp: '2026-01-01T00:00:00.000Z',
     reason: 'sale'
@@ -33,11 +33,10 @@ describe('validateIncomingOperation', () => {
         expect(validateIncomingOperation({ ...VALID, id: undefined }).ok).toBe(false);
     });
 
-    it('rejects a non-integer or non-positive productId', () => {
-        expect(validateIncomingOperation({ ...VALID, productId: 1.5 }).ok).toBe(false);
-        expect(validateIncomingOperation({ ...VALID, productId: 0 }).ok).toBe(false);
-        expect(validateIncomingOperation({ ...VALID, productId: -1 }).ok).toBe(false);
-        expect(validateIncomingOperation({ ...VALID, productId: '1' }).ok).toBe(false);
+    it('rejects a missing, empty, or non-string productUuid', () => {
+        expect(validateIncomingOperation({ ...VALID, productUuid: '' }).ok).toBe(false);
+        expect(validateIncomingOperation({ ...VALID, productUuid: undefined }).ok).toBe(false);
+        expect(validateIncomingOperation({ ...VALID, productUuid: 1 }).ok).toBe(false);
     });
 
     it('rejects a zero, non-finite, non-integer, or out-of-bounds quantityChange', () => {

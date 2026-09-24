@@ -17,11 +17,22 @@ export async function pushLocalOperations() {
 
     if (unsyncedOps.length === 0) return;
 
+    // The wire payload carries the canonical productUuid; the device-local
+    // numeric productId has no meaning on the receiving device and is never
+    // sent (KTD1).
+    const wireOps = unsyncedOps.map((op) => ({
+        id: op.id,
+        productUuid: op.productUuid,
+        quantityChange: op.quantityChange,
+        timestamp: op.timestamp,
+        reason: op.reason
+    }));
+
     try {
         const response = await fetch('/api/syncs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ operations: unsyncedOps })
+            body: JSON.stringify({ operations: wireOps })
         });
 
         const { success, processedIds, rejected, error } = await response.json();
@@ -72,10 +83,21 @@ export async function pullRemoteUpdates() {
             // But we only insert if not already present locally
             for (const op of newOperations) {
                 const existing = await db.operations.get(op.id);
-                if (!existing) {
-                    await db.operations.add({ ...op, synced: 1 });
-                    touchedProductIds.add(op.productId);
+                if (existing) continue;
+
+                // Resolve the wire-carried productUuid to this device's own
+                // local product row. A movement for a product this device
+                // has never seen (products don't sync yet — U3) cannot be
+                // reliably applied, so it is skipped rather than stored with
+                // a dangling or guessed productId.
+                const product = await db.products.where('uuid').equals(op.productUuid).first();
+                if (!product?.id) {
+                    console.warn('Skipping remote stock movement for unknown product uuid:', op.productUuid);
+                    continue;
                 }
+
+                await db.operations.add({ ...op, productId: product.id, synced: 1 });
+                touchedProductIds.add(product.id);
             }
         }
 
@@ -99,9 +121,13 @@ export async function recordStockOperation(
     quantityChange: number,
     reason: 'sale' | 'restock' | 'adjustment' | 'return' = 'adjustment'
 ) {
+    const product = await db.products.get(productId);
+    if (!product) return;
+
     const operation = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         productId,
+        productUuid: product.uuid,
         quantityChange,
         timestamp: new Date().toISOString(),
         synced: 0,
@@ -111,12 +137,9 @@ export async function recordStockOperation(
     await db.operations.add(operation);
 
     // Also update local product stock immediately for UI
-    const product = await db.products.get(productId);
-    if (product) {
-        await db.products.update(productId, {
-            stock: Math.max(0, product.stock + quantityChange)
-        });
-    }
+    await db.products.update(productId, {
+        stock: Math.max(0, product.stock + quantityChange)
+    });
 
     // Try to sync immediately if online
     if (navigator.onLine) {

@@ -115,3 +115,70 @@ describe('archived-product lifecycle migration (U2c)', () => {
         await db.close();
     });
 });
+
+describe('stock-movement product uuid migration (U3 prep)', () => {
+    afterEach(async () => {
+        await Dexie.delete(DB_NAME);
+    });
+
+    it('backfills productUuid on existing stock movements from the referenced product', async () => {
+        const legacy = new Dexie(DB_NAME);
+        legacy.version(6).stores({
+            products: '++id, name, uuid, archived',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        });
+        await legacy.open();
+        const productId = (await legacy.table('products').add({
+            uuid: 'product-uuid-1',
+            name: 'Legacy Widget',
+            price: 1950,
+            stock: 5,
+            archived: false
+        })) as number;
+        await legacy.table('operations').add({
+            id: 'op-1',
+            productId,
+            quantityChange: 5,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            synced: 1,
+            reason: 'restock'
+        });
+        legacy.close();
+
+        vi.resetModules();
+        const { db } = await import('./db');
+
+        const op = await db.operations.get('op-1');
+        expect(op?.productUuid).toBe('product-uuid-1');
+
+        await db.close();
+    });
+
+    it('leaves productUuid empty for a movement whose product no longer exists', async () => {
+        const legacy = new Dexie(DB_NAME);
+        legacy.version(6).stores({
+            products: '++id, name, uuid, archived',
+            operations: 'id, productId, timestamp, synced',
+            orders: '++id, date, uuid'
+        });
+        await legacy.open();
+        await legacy.table('operations').add({
+            id: 'op-orphan',
+            productId: 999,
+            quantityChange: 1,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            synced: 1,
+            reason: 'adjustment'
+        });
+        legacy.close();
+
+        vi.resetModules();
+        const { db } = await import('./db');
+
+        const op = await db.operations.get('op-orphan');
+        expect(op?.productUuid).toBe('');
+
+        await db.close();
+    });
+});
