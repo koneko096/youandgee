@@ -1,5 +1,6 @@
 // src/lib/sync.ts
 import { db } from '$lib/db';
+import { rebuildStockBalance } from '$lib/domain/stock-projection';
 
 export async function syncLedgerWithCloud() {
     if (!navigator.onLine) return;
@@ -41,7 +42,7 @@ async function pushLocalOperations() {
     }
 }
 
-async function pullRemoteUpdates() {
+export async function pullRemoteUpdates() {
     const lastSyncTime = localStorage.getItem('last_sync_timestamp') || '1970-01-01T00:00:00.000Z';
 
     try {
@@ -53,6 +54,8 @@ async function pullRemoteUpdates() {
 
         const { newOperations, timestamp } = await res.json();
 
+        const touchedProductIds = new Set<number>();
+
         if (newOperations && newOperations.length > 0) {
             // Use bulkPut with conflict resolution - local wins for same ID (shouldn't happen with UUIDs)
             // But we only insert if not already present locally
@@ -60,8 +63,17 @@ async function pullRemoteUpdates() {
                 const existing = await db.operations.get(op.id);
                 if (!existing) {
                     await db.operations.add({ ...op, synced: 1 });
+                    touchedProductIds.add(op.productId);
                 }
             }
+        }
+
+        // A remote movement changes stock for a product this device never
+        // wrote itself — rebuild its balance from the now-complete local
+        // ledger rather than leaving the stale value already on screen.
+        for (const productId of touchedProductIds) {
+            const movements = await db.operations.where('productId').equals(productId).toArray();
+            await db.products.update(productId, { stock: rebuildStockBalance(movements) });
         }
 
         localStorage.setItem('last_sync_timestamp', timestamp);

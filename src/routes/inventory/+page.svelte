@@ -21,7 +21,13 @@
 
     async function addProduct() {
         if (!name || price <= 0) return;
-        await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock, archived: false });
+        const initialStock = stock;
+        const id = (await db.products.add({ uuid: generateId(), name, price: toMinorUnits(price), stock: 0, archived: false })) as number;
+        // Record initial stock as a ledger movement rather than setting it
+        // directly, so stock projections rebuilt from the ledger match.
+        if (initialStock > 0) {
+            await recordStockOperation(id, initialStock, 'restock');
+        }
         // Reset form
         name = ""; price = 0; stock = 0;
     }
