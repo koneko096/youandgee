@@ -215,3 +215,35 @@ describe('product sync metadata migration (U3)', () => {
         await db.close();
     });
 });
+
+describe('order sync metadata migration (U3)', () => {
+    afterEach(async () => {
+        await Dexie.delete(DB_NAME);
+    });
+
+    it('backfills synced: 0 for orders that predate sync metadata', async () => {
+        const legacy = new Dexie(DB_NAME);
+        legacy.version(8).stores({
+            products: '++id, name, uuid, archived, synced',
+            operations: 'id, productId, productUuid, timestamp, synced',
+            orders: '++id, date, uuid'
+        });
+        await legacy.open();
+        const orderId = (await legacy.table('orders').add({
+            uuid: 'order-uuid-1',
+            date: new Date('2026-01-01T00:00:00.000Z'),
+            items: [{ name: 'Widget', price: 1000, quantity: 2 }],
+            total: 2000,
+            customerName: 'Ada Lovelace'
+        })) as number;
+        legacy.close();
+
+        vi.resetModules();
+        const { db } = await import('./db');
+
+        const order = await db.orders.get(orderId);
+        expect(order?.synced).toBe(0);
+
+        await db.close();
+    });
+});

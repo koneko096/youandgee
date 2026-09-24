@@ -30,6 +30,7 @@ interface Order {
     items: { name: string; price: number; quantity: number }[]; // price: integer minor units (KTD3)
     total: number; // Integer minor units (KTD3)
     customerName: string;
+    synced: number; // 0 = pending push, 1 = synced, -1 = rejected by server (invalid, will not be retried) — orders are immutable, so this only ever moves 0 -> 1 or 0 -> -1, never back
 }
 
 // Subclass Dexie for better type support
@@ -182,6 +183,23 @@ class MyDatabase extends Dexie {
             for (const product of products) {
                 if (product.synced === undefined) {
                     await tx.table('products').update(product.id, { synced: 0, updatedAt: now });
+                }
+            }
+        });
+
+        // Version 9: orders become a synced entity (U3) too. Orders are
+        // immutable once created (R3), so unlike products this only ever
+        // needs a pending/synced/rejected flag, never a conflict-arbitrating
+        // updatedAt — there is nothing to overwrite.
+        this.version(9).stores({
+            products: '++id, name, uuid, archived, synced',
+            operations: 'id, productId, productUuid, timestamp, synced',
+            orders: '++id, date, uuid, synced'
+        }).upgrade(async (tx) => {
+            const orders = await tx.table('orders').toArray();
+            for (const order of orders) {
+                if (order.synced === undefined) {
+                    await tx.table('orders').update(order.id, { synced: 0 });
                 }
             }
         });

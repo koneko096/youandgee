@@ -2,7 +2,7 @@
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
     import type { Product } from "$lib/db";
-    import { recordStockOperation } from "$lib/sync";
+    import { createOrder, recordStockOperation } from "$lib/sync";
     import { generateId } from "$lib/domain/id";
     import { formatMoney } from "$lib/domain/money";
 
@@ -85,7 +85,7 @@
             }
         }
 
-        const orderId = await db.orders.add({
+        const orderId = await createOrder({
             uuid: generateId(),
             date: new Date(),
             total: total,

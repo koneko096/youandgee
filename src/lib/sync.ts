@@ -1,5 +1,5 @@
 // src/lib/sync.ts
-import { db, type Product } from '$lib/db';
+import { db, type Order, type Product } from '$lib/db';
 import { rebuildStockBalance } from '$lib/domain/stock-projection';
 
 export async function syncWithCloud() {
@@ -12,6 +12,9 @@ export async function syncWithCloud() {
 
     await pushLocalOperations();
     await pullRemoteUpdates();
+
+    await pushLocalOrders();
+    await pullRemoteOrders();
 }
 
 export async function pushLocalOperations() {
@@ -217,6 +220,19 @@ export async function pullRemoteProducts() {
     }
 }
 
+// Create an order locally, stamped pending sync, and try to push it now.
+// Orders are immutable once created (R3) — there is no matching "update"
+// helper, only create.
+export async function createOrder(fields: Omit<Order, 'id' | 'synced'>) {
+    const id = (await db.orders.add({ ...fields, synced: 0 })) as number;
+
+    if (navigator.onLine) {
+        await syncWithCloud();
+    }
+
+    return id;
+}
+
 // Create a product locally, stamped pending sync, and try to push it now.
 export async function createProduct(fields: { uuid: string; name: string; price: number; archived: boolean }) {
     const id = (await db.products.add({
@@ -247,6 +263,84 @@ export async function updateProductFields(
 
     if (navigator.onLine) {
         await syncWithCloud();
+    }
+}
+
+export async function pushLocalOrders() {
+    const unsyncedOrders = await db.orders.where('synced').equals(0).toArray();
+
+    if (unsyncedOrders.length === 0) return;
+
+    const wireOrders = unsyncedOrders.map((o) => ({
+        uuid: o.uuid,
+        date: o.date.toISOString(),
+        items: o.items,
+        total: o.total,
+        customerName: o.customerName
+    }));
+
+    try {
+        const response = await fetch('/api/orders/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orders: wireOrders })
+        });
+
+        const { success, processedUuids, rejected, error } = await response.json();
+
+        if (!success) {
+            throw new Error(error || 'Order sync failed');
+        }
+
+        if (processedUuids && processedUuids.length > 0) {
+            await db.orders.where('uuid').anyOf(processedUuids).modify({ synced: 1 });
+        }
+
+        if (rejected && rejected.length > 0) {
+            const rejectedUuids = rejected.map((r: { uuid?: string }) => r.uuid).filter(Boolean);
+            if (rejectedUuids.length > 0) {
+                await db.orders.where('uuid').anyOf(rejectedUuids).modify({ synced: -1 });
+            }
+            console.error('Server rejected local orders as invalid:', rejected);
+        }
+    } catch (err) {
+        console.error('Order push sync failed, will retry when online:', err);
+    }
+}
+
+export async function pullRemoteOrders() {
+    const lastSyncTime = localStorage.getItem('last_order_sync_timestamp') || '1970-01-01T00:00:00.000Z';
+
+    try {
+        const res = await fetch(`/api/orders/pull?since=${encodeURIComponent(lastSyncTime)}`);
+
+        if (!res.ok) {
+            throw new Error(`Order pull failed: ${res.status}`);
+        }
+
+        const { orders, timestamp } = await res.json();
+
+        if (orders && orders.length > 0) {
+            for (const remote of orders as (Pick<Order, 'uuid' | 'items' | 'total' | 'customerName'> & { date: string })[]) {
+                // Orders are immutable (R3) — one this device already has
+                // needs no update, ever.
+                const existing = await db.orders.where('uuid').equals(remote.uuid).first();
+                if (existing) continue;
+
+                await db.orders.add({
+                    uuid: remote.uuid,
+                    date: new Date(remote.date),
+                    items: remote.items,
+                    total: remote.total,
+                    customerName: remote.customerName,
+                    synced: 1
+                });
+            }
+        }
+
+        localStorage.setItem('last_order_sync_timestamp', timestamp);
+    } catch (err) {
+        console.error('Order pull sync failed:', err);
     }
 }
 

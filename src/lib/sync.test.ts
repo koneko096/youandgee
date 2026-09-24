@@ -194,6 +194,27 @@ describe('recordStockOperation', () => {
     });
 });
 
+describe('createOrder', () => {
+    beforeEach(async () => {
+        await db.orders.clear();
+        vi.stubGlobal('navigator', { onLine: false });
+    });
+
+    it('creates an order stamped as pending sync', async () => {
+        const { createOrder } = await import('./sync');
+        const id = await createOrder({
+            uuid: 'order-1',
+            date: new Date('2026-01-01T00:00:00.000Z'),
+            items: [{ name: 'Widget', price: 1000, quantity: 2 }],
+            total: 2000,
+            customerName: 'Ada Lovelace'
+        });
+
+        const order = await db.orders.get(id);
+        expect(order).toMatchObject({ uuid: 'order-1', total: 2000, customerName: 'Ada Lovelace', synced: 0 });
+    });
+});
+
 describe('createProduct / updateProductFields', () => {
     beforeEach(async () => {
         await db.products.clear();
@@ -347,5 +368,136 @@ describe('pullRemoteProducts', () => {
         // (never part of the sync payload) must be untouched either way.
         expect(product?.name).toBe('Local Name');
         expect(product?.stock).toBe(3);
+    });
+});
+
+describe('pushLocalOrders', () => {
+    beforeEach(async () => {
+        await db.orders.clear();
+    });
+
+    it('sends wire-safe fields with an ISO date string and marks processed orders synced', async () => {
+        const id = (await db.orders.add({
+            uuid: 'order-1',
+            date: new Date('2026-01-01T00:00:00.000Z'),
+            items: [{ name: 'Widget', price: 1000, quantity: 2 }],
+            total: 2000,
+            customerName: 'Ada Lovelace',
+            synced: 0
+        })) as number;
+
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ success: true, processedUuids: ['order-1'], rejected: [] })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { pushLocalOrders } = await import('./sync');
+        await pushLocalOrders();
+
+        const [, requestInit] = fetchMock.mock.calls[0];
+        const sentBody = JSON.parse(requestInit.body as string);
+        expect(sentBody.orders).toEqual([
+            {
+                uuid: 'order-1',
+                date: '2026-01-01T00:00:00.000Z',
+                items: [{ name: 'Widget', price: 1000, quantity: 2 }],
+                total: 2000,
+                customerName: 'Ada Lovelace'
+            }
+        ]);
+
+        const order = await db.orders.get(id);
+        expect(order?.synced).toBe(1);
+    });
+
+    it('marks server-rejected orders rejected (synced: -1) rather than retrying forever', async () => {
+        await db.orders.add({
+            uuid: 'bad-order',
+            date: new Date('2026-01-01T00:00:00.000Z'),
+            items: [{ name: 'Widget', price: 1000, quantity: 2 }],
+            total: 2000,
+            customerName: 'Ada Lovelace',
+            synced: 0
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ success: true, processedUuids: [], rejected: [{ uuid: 'bad-order', error: 'total does not match items' }] })
+            })
+        );
+
+        const { pushLocalOrders } = await import('./sync');
+        await pushLocalOrders();
+
+        const order = await db.orders.where('uuid').equals('bad-order').first();
+        expect(order?.synced).toBe(-1);
+    });
+});
+
+describe('pullRemoteOrders', () => {
+    beforeEach(async () => {
+        await db.orders.clear();
+        vi.stubGlobal('localStorage', fakeLocalStorage());
+    });
+
+    it('inserts an order from another device as already-synced, parsing the date back to a Date', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({
+                    orders: [
+                        {
+                            uuid: 'remote-order-1',
+                            date: '2026-01-01T00:00:00.000Z',
+                            items: [{ name: 'Widget', price: 1000, quantity: 1 }],
+                            total: 1000,
+                            customerName: 'Remote Customer'
+                        }
+                    ],
+                    timestamp: '2026-01-01T00:00:01.000Z'
+                })
+            })
+        );
+
+        const { pullRemoteOrders } = await import('./sync');
+        await pullRemoteOrders();
+
+        const order = await db.orders.where('uuid').equals('remote-order-1').first();
+        expect(order?.synced).toBe(1);
+        expect(order?.date).toBeInstanceOf(Date);
+        expect(order?.total).toBe(1000);
+    });
+
+    it('does not insert an order this device already has (orders are immutable, so no update is ever needed)', async () => {
+        await db.orders.add({
+            uuid: 'order-1',
+            date: new Date('2026-01-01T00:00:00.000Z'),
+            items: [{ name: 'Widget', price: 1000, quantity: 1 }],
+            total: 1000,
+            customerName: 'Local Customer',
+            synced: 1
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({
+                    orders: [{ uuid: 'order-1', date: '2026-01-01T00:00:00.000Z', items: [], total: 1000, customerName: 'Should Not Apply' }],
+                    timestamp: '2026-01-01T00:00:01.000Z'
+                })
+            })
+        );
+
+        const { pullRemoteOrders } = await import('./sync');
+        await pullRemoteOrders();
+
+        const orders = await db.orders.where('uuid').equals('order-1').toArray();
+        expect(orders).toHaveLength(1);
+        expect(orders[0].customerName).toBe('Local Customer');
     });
 });
