@@ -4,20 +4,21 @@ A Svelte 5 + SvelteKit offline-first Point of Sale application featuring event-s
 
 ## Architecture
 
-- **Offline-first**: Dexie/IndexedDB for local persistence, works without network
-- **Event Sourcing**: Immutable stock operations (`quantityChange` deltas) instead of absolute values
-- **Cloudflare D1 Sync**: Bidirectional sync with idempotent batch operations
-- **Materialized View**: `product_stock_summary` table for O(1) stock lookups
+- **Offline-first**: Dexie/IndexedDB for local persistence, works without network — logging in requires a network connection once, after which the app works fully offline
+- **Event Sourcing**: Immutable stock operations (`quantityChange` deltas) instead of absolute values, keyed by the product's canonical `uuid` (not any device's local numeric id)
+- **Cloudflare D1 Sync**: Bidirectional sync for products (last-write-wins), orders (immutable, insert-only), and stock movements — all via Cloudflare Pages Functions, not SvelteKit server routes (see below)
+- **Auth**: A single login credential gates every sync endpoint (`functions/api/_middleware.ts`); local POS operation itself is never gated by login, only the network sync calls are
 - **PWA**: Service worker + manifest for installable offline experience
-- **adapter-static**: Pure client-side SPA deployed to Cloudflare Pages
+- **adapter-static + Pages Functions**: The app itself is a static client-side SPA; server-side logic (sync, auth) lives entirely in `functions/`, Cloudflare's own routing convention — not SvelteKit's `+server.ts` routes, which a static adapter cannot serve
 
 ## Tech Stack
 
 - Svelte 5 (Runes: `$state`, `$derived`, `$effect`)
 - SvelteKit with `@sveltejs/adapter-static`
 - Dexie.js for IndexedDB
-- Cloudflare D1 (serverless SQLite)
+- Cloudflare D1 (serverless SQLite) + Cloudflare Pages Functions
 - Wrangler for deployment
+- Vitest for testing
 - TailwindCSS v4
 - TypeScript
 
@@ -26,80 +27,42 @@ A Svelte 5 + SvelteKit offline-first Point of Sale application featuring event-s
 ### Local Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Start dev server
 npm run dev
 ```
 
-### Local Development with D1
+This runs the static SPA against your local IndexedDB — sync/auth calls will fail without a local D1 + Functions setup (see `llm/DEPLOY.md`).
+
+### Verification Gate
 
 ```bash
-# Start local D1 database
-wrangler dev --local --persist-to=./.wrangler/state --port=8788
-
-# In another terminal, start Vite
-npm run dev
+npm run check            # SvelteKit/TypeScript (src/)
+npm run check:functions  # Pages Functions (functions/) — separate tsconfig, not covered by the above
+npm run lint
+npm test
+npm run build
 ```
 
 ---
 
 ## Cloudflare Pages Deployment
 
-### Prerequisites
+Full step-by-step instructions — including the auth secret and login credential setup this app requires — are in **[`llm/DEPLOY.md`](./llm/DEPLOY.md)**. Short version:
 
-- Cloudflare account
-- Wrangler CLI: `npm install -g wrangler`
-
-### One-time Setup
-
-```bash
-# 1. Authenticate
-wrangler login
-
-# 2. Create D1 database
-wrangler d1 create youandgee-db
-# Copy the database_id from output
-
-# 3. Update wrangler.toml with database_id
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "youandgee-db"
-# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-# 4. Apply schema to D1
-wrangler d1 execute youandgee-db --remote --file=migrations/d1_schema.sql
-```
-
-### Deploy
-
-```bash
-# Build for production
-npm run build
-
-# Deploy to Cloudflare Pages
-wrangler pages deploy build --project-name=youandgee
-```
-
-### Configure D1 Binding in Pages Dashboard
-
-After first deploy:
-1. Go to **Pages → youandgee → Settings → Functions → D1 Database Bindings**
-2. Add binding: **Variable name** = `DB`, **Database** = `youandgee-db`
-3. Save (triggers redeploy)
+1. `npx wrangler login`, create a D1 database, set `database_id` in `wrangler.toml`
+2. `npx wrangler d1 migrations apply youandgee-db --remote` (ordered migration files under `migrations/`, tracked by D1 itself — not a single schema file re-run each time)
+3. `npx wrangler pages secret put SESSION_SECRET --project-name=youandgee`
+4. `node scripts/generate-credential-sql.mjs <username> <password>`, then run the SQL it prints against your D1
+5. Deploy via the GitHub Actions `workflow_dispatch`, or `npx wrangler pages deploy build --project-name=youandgee` directly
 
 ---
 
 ## CI/CD with GitHub Actions
 
-The `.github/workflows/deploy.yml` handles:
-- Type checking (`pnpm run check`)
-- Linting (`pnpm run lint`)
-- Build (`pnpm run build`)
-- Preview deployments for PRs
-- Production deployment on main branch push
-- Automatic D1 migrations on production deploy
+`.github/workflows/deploy.yml`:
+- Type checking (`npm run check` + `npm run check:functions`), linting, tests, build — on every push and PR
+- Preview deploy on PRs
+- Production deploy (migrations + Pages deploy) only on a manual `workflow_dispatch` — pushing to `main` alone does not deploy to production
 
 **Required GitHub Secrets:**
 - `CLOUDFLARE_API_TOKEN` - API token with Pages + D1 permissions
@@ -112,28 +75,39 @@ The `.github/workflows/deploy.yml` handles:
 ```
 src/
 ├── lib/
-│   ├── db.ts           # Dexie schema + event-sourcing ledger
-│   ├── sync.ts         # Client sync manager (push/pull)
-│   └── index.ts        # Exports
+│   ├── db.ts              # Dexie schema + migrations
+│   ├── sync.ts             # Client sync (push/pull for products, orders, stock movements)
+│   ├── client-auth.ts       # Session token storage + login (client side)
+│   ├── domain/              # Pure, unit-tested business logic (money, ids, stock projection/report, sync status)
+│   ├── exports/              # CSV generation (RFC 4180 quoting + formula-injection neutralization)
+│   ├── server/                # Business logic shared by functions/ (validation, auth, push/pull handlers)
+│   └── components/             # Shared Svelte components (receipt view, sync badge, login wall)
 ├── routes/
-│   ├── +page.svelte    # POS page (sales)
-│   ├── +layout.svelte  # Layout with nav
-│   ├── +layout.ts      # Sync initialization
-│   ├── inventory/      # Stock management
-│   ├── reports/        # Offline-capable reports
-│   ├── orders/         # Order history
-│   └── api/
-│       ├── syncs/      # POST /api/syncs - batch push
-│       └── sync/pull/  # GET /api/sync/pull - delta pull
-├── app.d.ts            # Platform.env.DB typing
-├── app.html            # HTML template
-└── service-worker.js   # PWA registration
+│   ├── +page.svelte         # POS page (sales)
+│   ├── +layout.svelte        # Login gate + sync-on-mount/reconnect
+│   ├── inventory/             # Stock management
+│   ├── reports/                # Stock-movement reports + CSV export
+│   └── orders/                  # Order history + receipt reprint
+├── app.d.ts                 # Platform.env.DB typing
+└── app.html                  # HTML template
 
-migrations/
-└── d1_schema.sql       # D1 schema (stock_ledger, product_stock_summary, etc.)
+functions/                    # Cloudflare Pages Functions — the actual server side (NOT src/routes/api)
+├── _middleware.ts             # Auth gate on every /api/* route except /api/auth/login
+├── api/
+│   ├── auth/login.ts
+│   ├── products/{push,pull}.ts
+│   ├── orders/{push,pull}.ts
+│   ├── syncs.ts                # Stock movement push
+│   └── sync/pull.ts             # Stock movement pull
 
-wrangler.toml           # Cloudflare Pages + D1 config
-DEPLOY.md               # Detailed deployment guide
+migrations/                    # Ordered, numbered D1 migrations (NOT a single schema file)
+└── 0001_initial_schema.sql, 0002_..., ...
+
+scripts/
+└── generate-credential-sql.mjs # Seeds the login credential — no bootstrap API endpoint exists
+
+wrangler.toml                  # Cloudflare Pages + D1 config
+llm/DEPLOY.md                   # Detailed deployment guide
 ```
 
 ---
@@ -141,21 +115,19 @@ DEPLOY.md               # Detailed deployment guide
 ## Sync Flow
 
 ```
-┌─────────────┐     POST /api/syncs     ┌──────────────┐     ┌──────────────┐
-│  Browser    │ ─────────────────────▶ │ Cloudflare   │ ───▶ │   Cloudflare │
-│  (Dexie)    │  { operations[] }      │  Pages       │      │     D1       │
-│             │                        │  (API)       │      │              │
-│ - synced:0  │ ◀───────────────────── │              │      │ - stock_     │
-│ - UUID ops  │  { processedIds[] }    │ - batch tx   │      │   ledger     │
-└─────────────┘                        │ - summary    │      │ - product_   │
-       │                              │   update     │      │   stock_     │
-       │                              └──────────────┘      │   summary    │
-       │ GET /api/sync/pull?since=ts                         └──────────────┘
-       │ ─────────────────────────────▶
-       │ ◀───────────────────────────── { newOperations[], timestamp }
-       ▼
-  Merge remote ops (dedupe by UUID)
+┌─────────────┐  Authorization: Bearer <token>  ┌───────────────────┐     ┌──────────────┐
+│  Browser    │ ───────────────────────────────▶│ Cloudflare Pages  │────▶│  Cloudflare  │
+│  (Dexie)    │  products/orders/stock push+pull │ Functions          │     │      D1      │
+│             │ ◀───────────────────────────────│ (functions/api/*)  │     │              │
+│ - synced:   │                                  │ - _middleware.ts:  │     │ - products   │
+│   0/1/-1    │                                  │   auth gate        │     │ - orders     │
+│   per entity│                                  │ - validates every  │     │ - stock_     │
+└─────────────┘                                  │   mutation's shape │     │   ledger     │
+                                                  └───────────────────┘     │ - credentials│
+                                                                            └──────────────┘
 ```
+
+`syncWithCloud()` (`src/lib/sync.ts`) runs products, then stock movements, then orders — a movement for a product this device hasn't seen can only resolve once that product itself has synced. Runs on app mount, on the browser `online` event, and as a side effect of any local write, whenever a valid session token exists.
 
 ---
 
@@ -163,35 +135,37 @@ DEPLOY.md               # Detailed deployment guide
 
 | Feature | Implementation |
 |---------|---------------|
-| Offline sales | Dexie local write → `synced: 0` → background sync |
-| Multi-device | Each device pushes unsynced, pulls delta since last sync |
-| Conflict-free | Client UUIDs + `ON CONFLICT(id) DO NOTHING` = idempotent |
-| Fast reads | `product_stock_summary` materialized in same D1 transaction |
-| Reports | Local Dexie queries (offline) + D1 SQL (central) |
+| Offline sales | Dexie local write → `synced: 0` → background sync when online and logged in |
+| Multi-device | Each device pushes unsynced work, pulls remote deltas since its own cursor |
+| Product conflicts | Last-write-wins by `updatedAt`, arbitrated both server-side (D1 `WHERE updated_at < excluded.updated_at`) and client-side (a stale pull can't clobber a newer unsynced local edit) |
+| Order integrity | Immutable — push is insert-only (`ON CONFLICT(uuid) DO NOTHING`), idempotent under retry |
+| Stock accuracy | Balance is a rebuildable projection over the movement ledger, never a second authority that could drift from it |
+| Reports | Local Dexie queries (date-range stock report with opening/closing balances) + CSV export |
+| Auth | Single login credential, PBKDF2-hashed, HMAC-signed session tokens — no user accounts/roles system, matches single-operator usage |
 
 ---
 
 ## Useful Commands
 
 ```bash
-# Type check
+# Type check (src/ and functions/ are checked separately — see Verification Gate above)
 npm run check
+npm run check:functions
 
-# Lint
+# Lint, test, build
 npm run lint
-
-# Build
+npm test
 npm run build
 
 # Preview production build
 npm run preview
 
 # View D1 data (remote)
-wrangler d1 execute youandgee-db --remote --command="SELECT * FROM stock_ledger ORDER BY created_at DESC LIMIT 20;"
-
-# View materialized summary
-wrangler d1 execute youandgee-db --remote --command="SELECT * FROM product_stock_summary;"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT * FROM stock_ledger ORDER BY created_at DESC LIMIT 20;"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT * FROM products;"
 
 # Tail function logs
-wrangler pages functions tail youandgee
+npx wrangler pages functions tail youandgee
 ```
+
+See **[`llm/DEPLOY.md`](./llm/DEPLOY.md)** for the full deployment guide, troubleshooting, and architecture summary.

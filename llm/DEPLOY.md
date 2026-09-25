@@ -2,16 +2,16 @@
 
 ## Prerequisites
 
-1. Cloudflare account with Workers/Pages access
-2. Wrangler CLI installed: `npm install -g wrangler`
-3. Node.js 20+ and pnpm/npm
+1. Cloudflare account with Pages/D1 access
+2. Wrangler CLI: `npm install -D wrangler` (already a devDependency — `npx wrangler` works without a global install)
+3. Node.js 20+ and npm (this project uses npm — `package-lock.json` is the lockfile; there is no pnpm anywhere in this project)
 
 ---
 
 ## Step 1: Authenticate Wrangler
 
 ```bash
-wrangler login
+npx wrangler login
 ```
 
 ---
@@ -19,7 +19,7 @@ wrangler login
 ## Step 2: Create D1 Database
 
 ```bash
-wrangler d1 create youandgee-db
+npx wrangler d1 create youandgee-db
 ```
 
 **Output example:**
@@ -38,60 +38,102 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # <-- paste here
 
 ---
 
-## Step 3: Apply D1 Schema
+## Step 3: Apply D1 Migrations
 
-Run the schema migration against your D1 database:
+Schema changes live as ordered, numbered files under `migrations/` (`0001_initial_schema.sql`, `0002_...`, etc.), tracked by Cloudflare's own D1 migrations system — **not** a single schema file re-executed each time. Applying is idempotent: it only runs migrations D1 hasn't recorded as applied yet.
 
 ```bash
 # Local development (requires local D1 via `wrangler dev`)
-wrangler d1 execute youandgee-db --local --file=migrations/d1_schema.sql
+npx wrangler d1 migrations apply youandgee-db --local
 
 # Production (remote)
-wrangler d1 execute youandgee-db --remote --file=migrations/d1_schema.sql
+npx wrangler d1 migrations apply youandgee-db --remote
 ```
+
+Adding a schema change later: create a new `NNNN_description.sql` file (next number in sequence) rather than editing an existing one, and re-run `migrations apply`.
 
 Verify tables created:
 ```bash
-wrangler d1 execute youandgee-db --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
 ---
 
-## Step 4: Build the Project
+## Step 4: Set the Session Secret
+
+The sync/auth middleware (`functions/api/_middleware.ts`) signs and verifies session tokens with an HMAC secret that must exist as a Cloudflare secret. Without it, every login attempt fails.
 
 ```bash
-pnpm install
-pnpm run build
+npx wrangler pages secret put SESSION_SECRET --project-name=youandgee
 ```
-
-Output goes to `build/` directory (configured in `wrangler.toml` as `pages_build_output_dir`).
+(paste any long random string when prompted)
 
 ---
 
-## Step 5: Deploy to Cloudflare Pages
+## Step 5: Create the Login Credential
+
+There is **no signup/bootstrap API endpoint** by design — an open bootstrap route would let anyone race to claim the first account before you do. Instead, generate the hash yourself and insert it directly:
+
+```bash
+node scripts/generate-credential-sql.mjs <username> <password>
+```
+
+This prints a ready-to-run `wrangler d1 execute ... INSERT INTO credentials ...` command using the exact PBKDF2 parameters the server verifies against. Copy and run it yourself — the script never sends anything over the network itself.
+
+The `credentials` table is *not* limited to one row by schema (no such constraint exists) — today's single-operator usage is a fact about how the app is used, not something baked into the database.
+
+---
+
+## Step 6: Build the Project
+
+```bash
+npm install
+npm run build
+```
+
+Output goes to `build/` (configured in `wrangler.toml` as `pages_build_output_dir`). Before deploying, it's worth running the full local gate that CI also runs:
+
+```bash
+npm run check            # SvelteKit/TypeScript
+npm run check:functions  # Pages Functions have their own tsconfig — svelte-check does not cover functions/
+npm run lint
+npm test
+npm run build
+```
+
+---
+
+## Step 7: Deploy to Cloudflare Pages
 
 ### Option A: Via Wrangler CLI (direct deploy)
 
 ```bash
-wrangler pages deploy build --project-name=youandgee
+npx wrangler pages deploy build --project-name=youandgee
 ```
 
-### Option B: Via Git Integration (recommended for CI/CD)
+### Option B: Via GitHub Actions (what this repo actually uses)
 
-1. Push repo to GitHub/GitLab
-2. In Cloudflare Dashboard → Pages → **Connect to Git**
-3. Select repository
-4. Build settings (auto-detected from `wrangler.toml`):
-   - **Build command**: `pnpm run build`
+`.github/workflows/deploy.yml` runs the full check/lint/test/build gate on every push and PR. Production deploy (migrations + Pages deploy) only runs on a manual trigger:
+
+```bash
+gh workflow run "Deploy to Cloudflare Pages" --repo <owner>/<repo>
+```
+or trigger it from the Actions tab in GitHub (`workflow_dispatch`).
+
+**Required GitHub Secrets:** `CLOUDFLARE_API_TOKEN` (Pages + D1 permissions), `CLOUDFLARE_ACCOUNT_ID`.
+
+### Option C: Via Git Integration (Cloudflare Dashboard)
+
+1. Push repo to GitHub
+2. Cloudflare Dashboard → Pages → **Connect to Git**
+3. Build settings:
+   - **Build command**: `npm run build`
    - **Build output directory**: `build`
-   - **Root directory**: `/` (or subfolder if monorepo)
-5. Add **Environment variable** (if needed):
-   - `NODE_ENV` = `production`
-6. Deploy!
+4. Deploy
 
 ---
 
-## Step 6: Configure D1 Binding in Pages Dashboard
+## Step 8: Configure D1 Binding in Pages Dashboard
 
 After first deploy, go to **Pages → your-project → Settings → Functions → D1 Database Bindings**:
 
@@ -102,13 +144,13 @@ After first deploy, go to **Pages → your-project → Settings → Functions �
 
 ---
 
-## Step 7: Verify Deployment
+## Step 9: Verify Deployment
 
-1. Visit your Pages URL: `https://youandgee.pages.dev`
-2. Test POS → make a sale
-3. Check **Network tab** → `/api/syncs` POST should return `200` with `processedIds`
-4. Refresh → data persists via IndexedDB
-5. Open second browser/device → verify sync works
+1. Visit your Pages URL — you should land on a full-page login wall, not the POS (if you see the POS directly without logging in, something is wrong with the auth deploy)
+2. Log in with the credential from Step 5
+3. Make a sale → Network tab → `/api/products/push`, `/api/syncs`, `/api/orders/push` should each return `200`
+4. Refresh → data persists via IndexedDB, and you stay logged in (session token in localStorage)
+5. Open a second browser/device, log in there too, and confirm a product/order created on one appears on the other after both sync
 
 ---
 
@@ -116,14 +158,15 @@ After first deploy, go to **Pages → your-project → Settings → Functions �
 
 ```bash
 # Start local D1 + Vite dev server
-wrangler dev --local --persist-to=./.wrangler/state --port=8788
+npx wrangler dev --local --persist-to=./.wrangler/state --port=8788
 
 # In another terminal
-pnpm run dev
+npm run dev
 ```
 
 - Local D1 at `http://localhost:8788` (proxied through Vite)
 - Local DB file at `.wrangler/state/v3/d1/miniflare-D1DatabaseObject/youandgee-db.sqlite`
+- Remember Steps 3-5 above apply locally too (`--local` instead of `--remote`) if you want auth/sync to work in local dev
 
 ---
 
@@ -131,10 +174,13 @@ pnpm run dev
 
 | Scenario | Behavior |
 |----------|----------|
-| Offline sale | Stored in Dexie with `synced: 0`, auto-syncs when online |
-| Multi-device | Each device pushes unsynced ops, pulls remote deltas via `/api/sync/pull` |
-| Conflict resolution | `ON CONFLICT(id) DO NOTHING` ensures idempotent replay |
-| Materialized view | `product_stock_summary` updated atomically in same D1 batch |
+| Offline sale | Stored in Dexie with `synced: 0`, auto-syncs when online and logged in |
+| Multi-device | Each device pushes unsynced products/orders/stock movements, pulls remote deltas |
+| Products | Last-write-wins by `updatedAt` (both client- and server-arbitrated) |
+| Orders | Immutable — push is insert-only (`ON CONFLICT(uuid) DO NOTHING`), never an update |
+| Stock movements | Keyed by the product's canonical `uuid`, not any device's local numeric id |
+| Auth | Every `/api/*` route except `/api/auth/login` requires a valid bearer token (`functions/api/_middleware.ts`) |
+| Server-rejected data | Client marks it `synced: -1` (not retried forever), logs it, never silently drops it |
 
 ---
 
@@ -143,16 +189,21 @@ pnpm run dev
 ### D1 Binding undefined in API routes
 - Ensure `DB` binding added in **Pages → Settings → Functions → D1 Database Bindings**
 - Redeploy after adding binding
-- Check `src/app.d.ts` has correct `Platform` interface
+- Check `src/app.d.ts` has the correct `Platform` interface
+
+### Login fails / "invalid credentials"
+- Confirm `SESSION_SECRET` is actually set (`wrangler pages secret list --project-name=youandgee`)
+- Confirm the credential row exists: `wrangler d1 execute youandgee-db --remote --command="SELECT username FROM credentials;"`
+- Username/password are case-sensitive and checked against exactly what you hashed in Step 5
 
 ### Sync not working
-- Check browser console for fetch errors
-- Verify `/api/syncs` and `/api/sync/pull` return 200 in Network tab
-- Ensure D1 database has `stock_ledger` and `product_stock_summary` tables
+- Check the browser console — sync failures are logged there ("Not logged in — ... deferred", rejection errors, etc.), never silent
+- Confirm you're actually logged in — an expired/cleared session silently defers sync rather than erroring loudly
+- Verify `/api/products/pull`, `/api/sync/pull`, `/api/orders/pull` return `200` (not `401`) with a valid token in Network tab
 
 ### Build fails
-- Run `pnpm run check` for TypeScript/Svelte errors
-- Ensure `@sveltejs/adapter-static` in devDependencies
+- Run `npm run check` and `npm run check:functions` separately — they cover different directories (`src/` vs `functions/`) and a failure in one won't show up in the other
+- Ensure `@sveltejs/adapter-static` is in devDependencies (this app is a static SPA; only `functions/` is server code)
 
 ---
 
@@ -160,19 +211,21 @@ pnpm run dev
 
 ```bash
 # View D1 data
-wrangler d1 execute youandgee-db --remote --command="SELECT * FROM stock_ledger ORDER BY created_at DESC LIMIT 20;"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT * FROM stock_ledger ORDER BY created_at DESC LIMIT 20;"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT * FROM products;"
+npx wrangler d1 execute youandgee-db --remote --command="SELECT * FROM orders ORDER BY created_at DESC LIMIT 20;"
 
-# View materialized summary
-wrangler d1 execute youandgee-db --remote --command="SELECT * FROM product_stock_summary;"
+# List applied/pending migrations
+npx wrangler d1 migrations list youandgee-db --remote
 
 # Tail Pages function logs
-wrangler pages functions tail youandgee
+npx wrangler pages functions tail youandgee
 
 # List deployments
-wrangler pages deployment list --project-name=youandgee
+npx wrangler pages deployment list --project-name=youandgee
 
 # Rollback deployment
-wrangler pages deployment rollback --project-name=youandgee <deployment-id>
+npx wrangler pages deployment rollback --project-name=youandgee <deployment-id>
 ```
 
 ---
@@ -180,22 +233,26 @@ wrangler pages deployment rollback --project-name=youandgee <deployment-id>
 ## Architecture Summary
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Browser    │────▶│ Cloudflare   │────▶│   Cloudflare │
-│  (Dexie)    │     │  Pages       │     │     D1       │
-│             │     │  (API routes)│     │              │
-│ - offline   │     │              │     │ - stock_     │
-│   first     │     │ - POST /     │     │   ledger     │
-│ - UUID ops  │     │   api/syncs  │     │ - product_   │
-│ - synced    │     │ - GET /api/  │     │   stock_     │
-│   flag      │     │   sync/pull  │     │   summary    │
-└─────────────┘     └──────────────┘     └──────────────┘
+┌─────────────┐   POST/GET /api/*   ┌──────────────────────┐     ┌──────────────┐
+│  Browser    │ ──────────────────▶ │ Cloudflare Pages     │────▶│  Cloudflare  │
+│  (Dexie)    │  Authorization:     │ Functions             │     │      D1      │
+│             │  Bearer <token>     │ (functions/api/*)     │     │              │
+│ - offline   │ ◀────────────────── │                        │     │ - stock_     │
+│   first     │                     │ - _middleware.ts:      │     │   ledger     │
+│ - synced    │                     │   auth gate on every   │     │ - products   │
+│   flag per  │                     │   route but /auth/login│     │ - orders     │
+│   entity    │                     │ - auth/login           │     │ - credentials│
+└─────────────┘                     │ - products/{push,pull} │     └──────────────┘
+                                     │ - orders/{push,pull}   │
+                                     │ - syncs, sync/pull      │
+                                     └──────────────────────┘
 ```
 
-**Sync flow:**
-1. Device creates operation → local Dexie (`synced: 0`)
-2. Online → `pushLocalOperations()` POSTs batch to `/api/syncs`
-3. D1 inserts to `stock_ledger` + updates `product_stock_summary` atomically
-4. Returns `processedIds` → client marks `synced: 1`
-5. Background `pullRemoteUpdates()` GETs `/api/sync/pull?since=lastSync`
-6. Merges remote ops into local Dexie (deduplicated by UUID)
+**Sync flow** (`src/lib/sync.ts`'s `syncWithCloud()`, run on app mount, on the `online` event, and after any local write):
+1. Push local products (`synced: 0`) → server upserts with last-write-wins by `updatedAt`
+2. Pull remote products since last cursor → client applies only if newer than its own local copy
+3. Push local stock movements, keyed by product `uuid` (not any device's local id)
+4. Pull remote stock movements → resolved to this device's own product row by `uuid`; skipped (not guessed) if unresolvable
+5. Push local orders (insert-only, idempotent under retry) → pull remote orders (insert-only, immutable)
+
+Every push/pull carries the bearer token; a `401` clears the stored token immediately rather than retrying with a token the server has already rejected.
