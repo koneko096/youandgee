@@ -1,11 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { syncWithCloud } from '$lib/sync';
+	import { isLoggedIn } from '$lib/client-auth';
 	import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte';
-	import LoginPrompt from '$lib/components/LoginPrompt.svelte';
+	import LoginWall from '$lib/components/LoginWall.svelte';
 
 	// 1. Accept the 'children' snippet (replaces <slot>)
 	let { children } = $props();
+
+	// Checked once, not reactively: a session that goes bad in the
+	// background (e.g. token expiry noticed by a sync attempt while
+	// offline) must not yank the app out from under someone mid-sale. The
+	// wall applies to starting a session, not to one already open.
+	let loggedIn = $state(isLoggedIn());
 
 	// 2. Use $state so the UI updates when the event fires
 	interface BeforeInstallPromptEvent extends Event {
@@ -40,11 +47,14 @@
 	}
 </script>
 
-<SyncStatusBadge />
-<LoginPrompt />
+{#if loggedIn}
+	<SyncStatusBadge />
 
-<!-- 3. Render the page content here -->
-{@render children()}
+	<!-- 3. Render the page content here -->
+	{@render children()}
+{:else}
+	<LoginWall onLoggedIn={() => { loggedIn = true; void syncWithCloud(); }} />
+{/if}
 
 <!-- Only show the button if the app is installable -->
 {#if deferredPrompt}
