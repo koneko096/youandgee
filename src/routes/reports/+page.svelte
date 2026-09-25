@@ -3,19 +3,24 @@
     import { db } from "$lib/db";
     import type { Product } from "$lib/db";
     import { SvelteMap } from "svelte/reactivity";
+    import { buildProductStockReport, type ProductStockReport } from "$lib/domain/stock-report";
+    import { toCsv } from "$lib/exports/csv";
 
     // --- STATE ---
-    let reportDate = $state(new Date().toISOString().split('T')[0]);
+    const today = new Date().toISOString().split('T')[0];
+    let startDate = $state(today);
+    let endDate = $state(today);
     let report = $state({
         totalSales: 0,
         totalRestock: 0,
         netChange: 0,
-        byProduct: [] as { product: Product; sold: number; restocked: number; net: number }[]
+        byProduct: [] as { product: Product; report: ProductStockReport }[]
     });
     let allProducts = $state(liveQuery(() => db.products.toArray()));
     let recentOps = $state(liveQuery(() => db.operations.orderBy('timestamp').reverse().limit(50).toArray()));
     let productNames = new SvelteMap<number, string>();
     let isLoading = $state(false);
+    let hasGenerated = $state(false);
 
     // Build name lookup reactively
     $effect(() => {
@@ -32,61 +37,87 @@
         return productNames.get(id) || `Product #${id}`;
     }
 
+    // The report window is timezone-naive (the date input's literal value,
+    // treated as UTC midnight-to-midnight) — no local-timezone conversion.
+    // Documented here rather than silently assumed, since AE4 requires the
+    // window/timezone to be visible.
+    function rangeBounds() {
+        return {
+            start: `${startDate}T00:00:00.000Z`,
+            end: `${endDate}T23:59:59.999Z`
+        };
+    }
+
     async function generateReport() {
         isLoading = true;
 
-        const dateStr = reportDate;
-        const start = `${dateStr}T00:00:00.000Z`;
-        const end = `${dateStr}T23:59:59.999Z`;
+        const { start, end } = rangeBounds();
+        const products = $allProducts || [];
 
-        // Fetch local operations for the selected date
-        const ops = await db.operations
-            .where('timestamp')
-            .between(start, end, true, true)
-            .toArray();
+        let totalSales = 0;
+        let totalRestock = 0;
+        const byProduct: { product: Product; report: ProductStockReport }[] = [];
 
-        let sales = 0;
-        let restock = 0;
-        const productMap: Record<number, { product: Product; sold: number; restocked: number }> = {};
+        for (const product of products) {
+            if (product.id == null) continue;
 
-        // Initialize product map
-        for (const p of ($allProducts || [])) {
-            if (p.id != null) {
-                productMap[p.id] = { product: p, sold: 0, restocked: 0 };
+            // Opening balance needs the product's entire history, not just
+            // what falls inside the selected range.
+            const allMovements = await db.operations.where('productId').equals(product.id).toArray();
+            const productReport = buildProductStockReport(allMovements, start, end);
+
+            const hasActivity =
+                productReport.sold !== 0 ||
+                productReport.restocked !== 0 ||
+                productReport.adjusted !== 0 ||
+                productReport.returned !== 0;
+
+            if (hasActivity) {
+                byProduct.push({ product, report: productReport });
+                totalSales += productReport.sold;
+                totalRestock += productReport.restocked;
             }
         }
-
-        for (const op of ops) {
-            if (op.quantityChange < 0) {
-                const qty = Math.abs(op.quantityChange);
-                sales += qty;
-                const entry = productMap[op.productId];
-                if (entry) entry.sold += qty;
-            } else {
-                const qty = op.quantityChange;
-                restock += qty;
-                const entry = productMap[op.productId];
-                if (entry) entry.restocked += qty;
-            }
-        }
-
-        const byProduct = Object.values(productMap)
-            .filter(p => p.sold > 0 || p.restocked > 0)
-            .map(p => ({
-                product: p.product,
-                sold: p.sold,
-                restocked: p.restocked,
-                net: p.restocked - p.sold
-            }));
 
         report = {
-            totalSales: sales,
-            totalRestock: restock,
-            netChange: restock - sales,
+            totalSales,
+            totalRestock,
+            netChange: totalRestock - totalSales,
             byProduct
         };
 
         isLoading = false;
+        hasGenerated = true;
+    }
+
+    function downloadCsv() {
+        const { start, end } = rangeBounds();
+        const headers = ['Product', 'Opening Balance', 'Restocked', 'Sold', 'Adjusted', 'Returned', 'Net Change', 'Closing Balance'];
+
+        const rows: (string | number)[][] =
+            report.byProduct.length > 0
+                ? report.byProduct.map(({ product, report: r }) => [
+                      product.name,
+                      r.openingBalance,
+                      r.restocked,
+                      r.sold,
+                      r.adjusted,
+                      r.returned,
+                      r.netChange,
+                      r.closingBalance
+                  ])
+                : [[`No stock movements between ${start} and ${end} (UTC)`, '', '', '', '', '', '', '']];
+
+        const csv = toCsv(headers, rows);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `stock-report-${startDate}-to-${endDate}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     }
 </script>
 
@@ -100,17 +131,21 @@
 
     <div class="report-controls card">
         <div class="control-group">
-            <label for="reportDate">Report Date</label>
-            <input
-                id="reportDate"
-                type="date"
-                bind:value={reportDate}
-                onchange={generateReport}
-            />
+            <label for="startDate">From</label>
+            <input id="startDate" type="date" bind:value={startDate} onchange={generateReport} />
+       </div>
+        <div class="control-group">
+            <label for="endDate">To</label>
+            <input id="endDate" type="date" bind:value={endDate} onchange={generateReport} />
        </div>
         <div class="control-group">
             <button class="primary-btn" onclick={generateReport} disabled={isLoading}>
                 {isLoading ? 'Generating...' : 'Generate Report'}
+           </button>
+       </div>
+        <div class="control-group">
+            <button class="secondary-btn" onclick={downloadCsv} disabled={!hasGenerated}>
+                ⬇️ Download CSV
            </button>
        </div>
    </div>
@@ -134,33 +169,47 @@
 
     <div class="detail-card card">
         <h2>Breakdown by Product</h2>
-        {#if report.byProduct.length > 0}
+        {#if !hasGenerated}
+        <div class="empty-state">
+            <p>Choose a range and generate a report</p>
+       </div>
+        {:else if report.byProduct.length > 0}
         <table>
             <thead>
                 <tr>
                     <th>Product</th>
+                    <th class="numeric">Opening</th>
                     <th class="numeric">Restocked</th>
                     <th class="numeric">Sold</th>
+                    <th class="numeric">Adjusted</th>
+                    <th class="numeric">Returned</th>
                     <th class="numeric">Net Change</th>
+                    <th class="numeric">Closing</th>
                </tr>
            </thead>
             <tbody>
                 {#each report.byProduct as item (item.product.id)}
                 <tr>
                     <td class="name-cell"><strong>{item.product.name}</strong></td>
-                    <td class="numeric positive">+{item.restocked}</td>
-                    <td class="numeric negative">-{item.sold}</td>
-                    <td class="numeric" class:positive={item.net >= 0} class:negative={item.net < 0}>
-                        {item.net >= 0 ? '+' : ''}{item.net}
+                    <td class="numeric">{item.report.openingBalance}</td>
+                    <td class="numeric positive">+{item.report.restocked}</td>
+                    <td class="numeric negative">-{item.report.sold}</td>
+                    <td class="numeric" class:positive={item.report.adjusted >= 0} class:negative={item.report.adjusted < 0}>
+                        {item.report.adjusted >= 0 ? '+' : ''}{item.report.adjusted}
                     </td>
+                    <td class="numeric positive">+{item.report.returned}</td>
+                    <td class="numeric" class:positive={item.report.netChange >= 0} class:negative={item.report.netChange < 0}>
+                        {item.report.netChange >= 0 ? '+' : ''}{item.report.netChange}
+                    </td>
+                    <td class="numeric"><strong>{item.report.closingBalance}</strong></td>
                 </tr>
                 {/each}
            </tbody>
        </table>
         {:else}
         <div class="empty-state">
-            <p>No stock movements for this date</p>
-            <small>Select a different date or make some sales/restocks</small>
+            <p>No stock movements in this date range</p>
+            <small>Select a different range or make some sales/restocks</small>
        </div>
         {/if}
    </div>
