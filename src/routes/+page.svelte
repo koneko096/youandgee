@@ -17,6 +17,7 @@
     let showReceipt = $state(false);
     let lastOrder = $state<Order | null>(null);
     let isCartOpen = $state(false);
+    let checkingOut = $state(false);
 
     // --- COMPUTED (Derived) ---
     let filteredProducts = $derived(
@@ -66,6 +67,11 @@
     }
 
     async function checkout() {
+        // Re-entrancy guard: without it, a double-tap during the async gap
+        // between this call and showReceipt flipping true (the checkout
+        // button stays enabled the whole time) would run this twice
+        // concurrently — two orders, two stock deductions, for one sale.
+        if (checkingOut) return;
         if (cart.length === 0) return;
 
         // Validate customer name
@@ -74,34 +80,40 @@
             return;
         }
 
-        // Record each item as a stock operation (delta movement)
-        for (const item of cart) {
-            if (item.product.id) {
-                await recordStockOperation(
-                    item.product.id,
-                    -item.qty, // Negative for sale
-                    'sale'
-                );
+        checkingOut = true;
+        try {
+            // Record each item as a stock operation (delta movement)
+            for (const item of cart) {
+                if (item.product.id) {
+                    await recordStockOperation(
+                        item.product.id,
+                        -item.qty, // Negative for sale
+                        'sale'
+                    );
+                }
             }
+
+            const orderId = await createOrder({
+                uuid: generateId(),
+                date: new Date(),
+                total: total,
+                customerName: customerName.trim(),
+                items: cart.map(i => ({
+                    name: i.product.name,
+                    price: i.product.price,
+                    quantity: i.qty
+                }))
+            });
+
+            // Read back the persisted order rather than reusing the live
+            // cart — the receipt must reflect the immutable snapshot that
+            // was actually saved, not in-memory state that could drift from
+            // it (AE1, R4).
+            lastOrder = (await db.orders.get(orderId as number)) ?? null;
+            showReceipt = true;
+        } finally {
+            checkingOut = false;
         }
-
-        const orderId = await createOrder({
-            uuid: generateId(),
-            date: new Date(),
-            total: total,
-            customerName: customerName.trim(),
-            items: cart.map(i => ({
-                name: i.product.name,
-                price: i.product.price,
-                quantity: i.qty
-            }))
-        });
-
-        // Read back the persisted order rather than reusing the live cart —
-        // the receipt must reflect the immutable snapshot that was actually
-        // saved, not in-memory state that could drift from it (AE1, R4).
-        lastOrder = (await db.orders.get(orderId as number)) ?? null;
-        showReceipt = true;
     }
 
     function printReceipt() {
@@ -204,8 +216,8 @@
                 <span>Total Amount:</span>
                 <span class="grand-total">{formatMoney(total)}</span>
             </div>
-            <button class="checkout-btn primary-btn" onclick={checkout} disabled={cart.length===0}>
-                Place Order & Print Receipt
+            <button class="checkout-btn primary-btn" onclick={checkout} disabled={cart.length===0 || checkingOut}>
+                {checkingOut ? "Processing…" : "Place Order & Print Receipt"}
             </button>
         </div>
     </div>
