@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { syncWithCloud } from '$lib/sync';
+	import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte';
 
 	// 1. Accept the 'children' snippet (replaces <slot>)
 	let { children } = $props();
@@ -37,6 +38,8 @@
 		}
 	}
 </script>
+
+<SyncStatusBadge />
 
 <!-- 3. Render the page content here -->
 {@render children()}
