@@ -1,10 +1,11 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
-    import type { Product } from "$lib/db";
+    import type { Order, Product } from "$lib/db";
     import { createOrder, recordStockOperation } from "$lib/sync";
     import { generateId } from "$lib/domain/id";
     import { formatMoney } from "$lib/domain/money";
+    import ReceiptView from "$lib/components/ReceiptView.svelte";
 
     // --- DATA ---
     let products = $state(liveQuery(() => db.products.toArray()));
@@ -14,8 +15,7 @@
     let cart = $state < { product: Product; qty: number }[] > ([]);
     let customerName = $state("");
     let showReceipt = $state(false);
-    let lastOrderId = $state < number | null > (null);
-    let lastCustomerName = $state("");
+    let lastOrder = $state<Order | null>(null);
     let isCartOpen = $state(false);
 
     // --- COMPUTED (Derived) ---
@@ -97,8 +97,10 @@
             }))
         });
 
-        lastOrderId = orderId as number;
-        lastCustomerName = customerName.trim();
+        // Read back the persisted order rather than reusing the live cart —
+        // the receipt must reflect the immutable snapshot that was actually
+        // saved, not in-memory state that could drift from it (AE1, R4).
+        lastOrder = (await db.orders.get(orderId as number)) ?? null;
         showReceipt = true;
     }
 
@@ -220,36 +222,16 @@
 </div>
 
 <!-- RECEIPT MODAL -->
-{#if showReceipt}
-<div class="modal-overlay">
-    <div class="receipt-paper">
-        <div class="receipt-header">
-            <h2>Arafah POS</h2>
-            <p class="order-id">Order ID: #{lastOrderId}</p>
-            <p class="customer-name">Customer: {lastCustomerName}</p>
-            <p class="date">{new Date().toLocaleString()}</p>
-        </div>
-        <div class="receipt-content">
-            {#each cart as item, i (i)}
-            <div class="receipt-row">
-                <span>{item.product.name} (x{item.qty})</span>
-                <span>{formatMoney(item.product.price * item.qty)}</span>
-            </div>
-            {/each}
-        </div>
-        <div class="receipt-footer">
-            <div class="final-total">
-                <span>TOTAL PAID</span>
-                <span>{formatMoney(total)}</span>
-            </div>
-            <p class="thanks">Thank you for your business!</p>
-        </div>
-        <div class="no-print actions">
-            <button class="primary-btn" onclick={printReceipt}>🖨️ Print</button>
-            <button class="secondary-btn" onclick={()=> showReceipt = false}>Close</button>
-        </div>
-    </div>
-</div>
+{#if showReceipt && lastOrder}
+<ReceiptView
+    orderId={lastOrder.id ?? ''}
+    customerName={lastOrder.customerName}
+    date={lastOrder.date}
+    items={lastOrder.items}
+    total={lastOrder.total}
+    onPrint={printReceipt}
+    onClose={() => showReceipt = false}
+/>
 {/if}
 
 <style>
@@ -759,157 +741,20 @@
         font-weight: 600;
     }
 
-    /* Modal & Receipt */
-    .modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.6);
-        backdrop-filter: blur(4px);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 1000;
-    }
-
-    .receipt-paper {
-        background: white;
-        padding: 40px;
-        width: 380px;
-        border-radius: 4px;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-        font-family: 'Courier New', Courier, monospace;
-    }
-
-    .receipt-header {
-        text-align: center;
-        border-bottom: 2px dashed #000;
-        padding-bottom: 20px;
-        margin-bottom: 20px;
-    }
-
-    .receipt-header h2 {
-        margin: 0;
-    }
-
-    .order-id {
-        font-size: 0.9rem;
-        margin: 5px 0;
-    }
-
-    .date {
-        font-size: 0.8rem;
-        color: #666;
-    }
-
-    .receipt-content {
-        margin-bottom: 20px;
-    }
-
-    .receipt-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 8px;
-    }
-
-    .receipt-footer {
-        border-top: 2px dashed #000;
-        padding-top: 20px;
-        text-align: center;
-    }
-
-    .final-total {
-        display: flex;
-        justify-content: space-between;
-        font-weight: 900;
-        font-size: 1.25rem;
-        margin-bottom: 20px;
-    }
-
-    .thanks {
-        font-style: italic;
-        margin-top: 20px;
-    }
-
-    .actions {
-        margin-top: 30px;
-        display: flex;
-        gap: 12px;
-    }
-
+    /* Receipt-specific print styling (sizing, page breaks, color reset)
+       lives in ReceiptView.svelte. This page is still responsible for
+       hiding its own non-receipt content when printing — printing already
+       had fiddly cross-device history here, so this stays a per-page,
+       explicit display:none list rather than a generic visibility trick
+       that could leave invisible-but-still-laid-out content behind and
+       reintroduce blank extra pages. */
     @media print {
-        /* Reset all styling for print */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html, body {
-            width: 100%;
-            height: auto;
-            margin: 0;
-            padding: 0;
-            overflow: visible;
-        }
-
-        /* Hide everything on the page */
         .pos-wrapper {
             display: none !important;
         }
 
         .mobile-cart-toggle {
             display: none !important;
-        }
-
-        /* Show only the receipt */
-        .modal-overlay {
-            position: static !important;
-            background: white !important;
-            backdrop-filter: none !important;
-            display: block !important;
-            width: 100% !important;
-            height: auto !important;
-            inset: auto !important;
-        }
-
-        .receipt-paper {
-            width: 100% !important;
-            max-width: 80mm !important;
-            margin: 0 auto !important;
-            padding: 20px !important;
-            box-shadow: none !important;
-            border-radius: 0 !important;
-            page-break-inside: avoid;
-        }
-
-        .receipt-header,
-        .receipt-content,
-        .receipt-footer {
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-        }
-
-        .receipt-row {
-            display: flex !important;
-            visibility: visible !important;
-        }
-
-        /* Hide print/close buttons */
-        .no-print {
-            display: none !important;
-        }
-
-        /* Ensure text is visible */
-        .receipt-paper * {
-            color: #000 !important;
-            background: transparent !important;
-        }
-
-        /* Mobile print fixes */
-        @page {
-            margin: 0.5cm;
-            size: auto;
         }
     }
 </style>

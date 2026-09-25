@@ -1,11 +1,14 @@
 <script lang="ts">
     import { liveQuery } from "dexie";
     import { db } from "$lib/db";
+    import type { Order } from "$lib/db";
     import { formatMoney } from "$lib/domain/money";
+    import ReceiptView from "$lib/components/ReceiptView.svelte";
 
     // --- DATA ---
     let orders = $state(liveQuery(() => db.orders.orderBy('date').reverse().toArray()));
     let expandedOrderId = $state<number | null>(null);
+    let receiptOrder = $state<Order | null>(null);
 
     // --- ACTIONS ---
     function toggleOrder(orderId: number | undefined) {
@@ -59,6 +62,7 @@
                         <strong>Total:</strong>
                         <strong>{formatMoney(order.total)}</strong>
                     </div>
+                    <button class="print-btn" onclick={() => receiptOrder = order}>🖨️ Print Receipt</button>
                 </div>
                 {/if}
             </div>
@@ -71,6 +75,18 @@
         {/if}
     </div>
 </div>
+
+{#if receiptOrder}
+<ReceiptView
+    orderId={receiptOrder.id ?? ''}
+    customerName={receiptOrder.customerName}
+    date={receiptOrder.date}
+    items={receiptOrder.items}
+    total={receiptOrder.total}
+    onPrint={() => window.print()}
+    onClose={() => receiptOrder = null}
+/>
+{/if}
 
 <style>
     :global(body) {
@@ -281,5 +297,30 @@
 
     .empty-state small {
         font-size: 0.9rem;
+    }
+
+    .print-btn {
+        margin-top: 16px;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 6px;
+        background: #edf2f7;
+        color: #2d3748;
+        font-weight: 600;
+        font-size: 0.9rem;
+        cursor: pointer;
+    }
+
+    .print-btn:hover {
+        background: #e2e8f0;
+    }
+
+    /* Same reasoning as +page.svelte: this page hides its own non-receipt
+       content explicitly rather than relying on a generic hide-everything
+       trick in ReceiptView (see that component's print styles). */
+    @media print {
+        .orders-wrapper {
+            display: none !important;
+        }
     }
 </style>
