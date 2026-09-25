@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from './db';
 
-function fakeLocalStorage() {
-    const store = new Map<string, string>();
+// Seeded logged-in by default — most sync behavior under test here is
+// orthogonal to auth, and the dedicated auth-handling tests override this
+// explicitly (an absent or cleared token, a 401 response).
+function fakeLocalStorage(seed: Record<string, string> = { session_token: 'test-token' }) {
+    const store = new Map<string, string>(Object.entries(seed));
     return {
         getItem: (key: string) => store.get(key) ?? null,
         setItem: (key: string, value: string) => {
             store.set(key, value);
+        },
+        removeItem: (key: string) => {
+            store.delete(key);
         }
     };
 }
@@ -95,6 +101,7 @@ describe('pushLocalOperations', () => {
     beforeEach(async () => {
         await db.products.clear();
         await db.operations.clear();
+        vi.stubGlobal('localStorage', fakeLocalStorage());
     });
 
     it('sends productUuid on the wire, never the device-local productId', async () => {
@@ -254,6 +261,7 @@ describe('createProduct / updateProductFields', () => {
 describe('pushLocalProducts', () => {
     beforeEach(async () => {
         await db.products.clear();
+        vi.stubGlobal('localStorage', fakeLocalStorage());
     });
 
     it('sends only wire-safe fields and marks processed products synced', async () => {
@@ -311,6 +319,72 @@ describe('pushLocalProducts', () => {
         const product = await db.products.where('uuid').equals('bad').first();
         expect(product?.synced).toBe(-1);
     });
+
+    it('sends the stored session token as a bearer header', async () => {
+        await db.products.add({
+            uuid: 'p-1',
+            name: 'Widget',
+            price: 1000,
+            stock: 0,
+            archived: false,
+            synced: 0,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ success: true, processedUuids: ['p-1'], rejected: [] })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { pushLocalProducts } = await import('./sync');
+        await pushLocalProducts();
+
+        const [, requestInit] = fetchMock.mock.calls[0];
+        expect((requestInit.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    });
+
+    it('skips the request entirely and leaves work pending when not logged in', async () => {
+        await db.products.add({
+            uuid: 'p-1',
+            name: 'Widget',
+            price: 1000,
+            stock: 0,
+            archived: false,
+            synced: 0,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        vi.stubGlobal('localStorage', fakeLocalStorage({}));
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { pushLocalProducts } = await import('./sync');
+        await pushLocalProducts();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        const product = await db.products.where('uuid').equals('p-1').first();
+        expect(product?.synced).toBe(0);
+    });
+
+    it('clears the stored session token when the server reports it as unauthorized', async () => {
+        await db.products.add({
+            uuid: 'p-1',
+            name: 'Widget',
+            price: 1000,
+            stock: 0,
+            archived: false,
+            synced: 0,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) }));
+
+        const { pushLocalProducts } = await import('./sync');
+        await pushLocalProducts();
+
+        expect(localStorage.getItem('session_token')).toBeNull();
+    });
 });
 
 describe('pullRemoteProducts', () => {
@@ -336,6 +410,17 @@ describe('pullRemoteProducts', () => {
 
         const product = await db.products.where('uuid').equals('remote-p-1').first();
         expect(product).toMatchObject({ name: 'Remote Widget', price: 500, stock: 0, synced: 1 });
+    });
+
+    it('skips the request entirely when not logged in', async () => {
+        vi.stubGlobal('localStorage', fakeLocalStorage({}));
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { pullRemoteProducts } = await import('./sync');
+        await pullRemoteProducts();
+
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('applies a remote update only when it is newer than the local one (last-write-wins)', async () => {
@@ -374,6 +459,7 @@ describe('pullRemoteProducts', () => {
 describe('pushLocalOrders', () => {
     beforeEach(async () => {
         await db.orders.clear();
+        vi.stubGlobal('localStorage', fakeLocalStorage());
     });
 
     it('sends wire-safe fields with an ISO date string and marks processed orders synced', async () => {

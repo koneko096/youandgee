@@ -1,6 +1,32 @@
 // src/lib/sync.ts
 import { db, type Order, type Product } from '$lib/db';
 import { rebuildStockBalance } from '$lib/domain/stock-projection';
+import { getAuthToken, logout } from '$lib/client-auth';
+
+/**
+ * Every sync call goes through this — attaches the bearer token, and if the
+ * server ever reports 401 the stored token is cleared immediately rather
+ * than kept around to fail the same way on every subsequent sync attempt
+ * until the operator happens to log in again.
+ *
+ * Returns null (rather than throwing) when there is no token at all, so
+ * callers can skip the request entirely instead of making a doomed one.
+ */
+async function authedFetch(url: string, init: RequestInit = {}): Promise<Response | null> {
+    const token = getAuthToken();
+    if (!token) return null;
+
+    const response = await fetch(url, {
+        ...init,
+        headers: { ...init.headers, Authorization: `Bearer ${token}` }
+    });
+
+    if (response.status === 401) {
+        logout();
+    }
+
+    return response;
+}
 
 export async function syncWithCloud() {
     if (!navigator.onLine) return;
@@ -34,11 +60,15 @@ export async function pushLocalOperations() {
     }));
 
     try {
-        const response = await fetch('/api/syncs', {
+        const response = await authedFetch('/api/syncs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ operations: wireOps })
         });
+        if (!response) {
+            console.warn('Not logged in — stock movement sync deferred.');
+            return;
+        }
 
         const { success, processedIds, rejected, error } = await response.json();
 
@@ -73,7 +103,11 @@ export async function pullRemoteUpdates() {
     const lastSyncTime = localStorage.getItem('last_sync_timestamp') || '1970-01-01T00:00:00.000Z';
 
     try {
-        const res = await fetch(`/api/sync/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        const res = await authedFetch(`/api/sync/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        if (!res) {
+            console.warn('Not logged in — stock movement pull deferred.');
+            return;
+        }
 
         if (!res.ok) {
             throw new Error(`Pull failed: ${res.status}`);
@@ -137,11 +171,15 @@ export async function pushLocalProducts() {
     }));
 
     try {
-        const response = await fetch('/api/products/push', {
+        const response = await authedFetch('/api/products/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ products: wireProducts })
         });
+        if (!response) {
+            console.warn('Not logged in — product sync deferred.');
+            return;
+        }
 
         const { success, processedUuids, rejected, error } = await response.json();
 
@@ -172,7 +210,11 @@ export async function pullRemoteProducts() {
     const lastSyncTime = localStorage.getItem('last_product_sync_timestamp') || '1970-01-01T00:00:00.000Z';
 
     try {
-        const res = await fetch(`/api/products/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        const res = await authedFetch(`/api/products/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        if (!res) {
+            console.warn('Not logged in — product pull deferred.');
+            return;
+        }
 
         if (!res.ok) {
             throw new Error(`Product pull failed: ${res.status}`);
@@ -280,11 +322,15 @@ export async function pushLocalOrders() {
     }));
 
     try {
-        const response = await fetch('/api/orders/push', {
+        const response = await authedFetch('/api/orders/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ orders: wireOrders })
         });
+        if (!response) {
+            console.warn('Not logged in — order sync deferred.');
+            return;
+        }
 
         const { success, processedUuids, rejected, error } = await response.json();
 
@@ -312,7 +358,11 @@ export async function pullRemoteOrders() {
     const lastSyncTime = localStorage.getItem('last_order_sync_timestamp') || '1970-01-01T00:00:00.000Z';
 
     try {
-        const res = await fetch(`/api/orders/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        const res = await authedFetch(`/api/orders/pull?since=${encodeURIComponent(lastSyncTime)}`);
+        if (!res) {
+            console.warn('Not logged in — order pull deferred.');
+            return;
+        }
 
         if (!res.ok) {
             throw new Error(`Order pull failed: ${res.status}`);
